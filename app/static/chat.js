@@ -21,17 +21,22 @@ function addBotResponse(data) {
     let text = data.answer;
 
     if (data.sources && data.sources.length > 0) {
-        text += "\n\n[출처]";
-        data.sources.forEach((source, index) => {
-            text += `\n${index + 1}. ${source.title}`;
-            if (source.source) {
-                text += ` / ${source.source}`;
-            }
-            if (source.source_page) {
-                text += ` / ${source.source_page}`;
-            }
-        });
-    }
+    text += "\n\n[출처]";
+    data.sources.forEach((source, index) => {
+        const title = source.title || source.source || "출처 없음";
+        const page = source.source_page || source.page || "";
+
+        text += `\n${index + 1}. ${title}`;
+
+        if (page) {
+            text += ` / ${page}`;
+        }
+
+        if (source.score !== undefined) {
+            text += ` / 유사도: ${Number(source.score).toFixed(3)}`;
+        }
+    });
+}
 
     addMessage(text, "bot");
 }
