@@ -1,0 +1,34 @@
+"""LangGraph 에이전트 상태 정의."""
+from typing import Annotated, Literal, TypedDict
+
+from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
+
+
+class AgentState(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
+
+    # Router가 결정한 의도
+    intent: Literal["chat", "rag", "tool"] | None
+
+    # RAG 검색 결과 (문서 내용 + 출처)
+    retrieved_docs: list[dict]
+
+    # Tool 정보
+    tool_name: str | None
+    tool_args: dict | None
+    tool_result: dict | None
+
+    session_id: str
+
+
+def create_initial_state(session_id: str, messages: list[BaseMessage] | None = None) -> AgentState:
+    return AgentState(
+        messages=messages or [],
+        intent=None,
+        retrieved_docs=[],
+        tool_name=None,
+        tool_args=None,
+        tool_result=None,
+        session_id=session_id,
+    )

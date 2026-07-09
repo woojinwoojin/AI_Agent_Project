@@ -7,3 +7,8 @@ pgvector
 openai
 python-dotenv
 requests
+
+# LangGraph 에이전트
+langgraph
+langchain-core
+langchain-upstage
