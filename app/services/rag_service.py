@@ -2,6 +2,8 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from app.services.llm_service import generate_answer_with_llm
+
 
 
 DOCS_PATH = Path("data/docs.json")
@@ -146,3 +148,7 @@ def build_answer(query: str, docs: list[dict[str, Any]]) -> dict[str, Any]:
 def rag_answer(query: str) -> dict[str, Any]:
     retrieved_docs = retrieve_docs(query, top_k=3)
     return build_answer(query, retrieved_docs)
+
+def rag_answer(query: str) -> dict:
+    retrieved_docs = retrieve_docs(query, top_k=3)
+    return generate_answer_with_llm(query, retrieved_docs)
