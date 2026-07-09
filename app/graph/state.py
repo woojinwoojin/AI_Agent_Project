@@ -19,6 +19,10 @@ class AgentState(TypedDict):
     tool_args: dict | None
     tool_result: dict | None
 
+    # 가드레일: RAG로 답을 못 찾아 문의처로 안내해야 할 때
+    guardrail: bool
+    contact: dict | None
+
     session_id: str
 
 
@@ -30,5 +34,7 @@ def create_initial_state(session_id: str, messages: list[BaseMessage] | None = N
         tool_name=None,
         tool_args=None,
         tool_result=None,
+        guardrail=False,
+        contact=None,
         session_id=session_id,
     )

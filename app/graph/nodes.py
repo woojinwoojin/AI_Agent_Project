@@ -9,12 +9,14 @@ from pydantic import BaseModel, Field
 
 from app import config
 from app.core.prompts import (
+    GUARDRAIL_GROUNDING,
     RAG_GROUNDING,
     RESPONSE_PROMPT,
     ROUTER_PROMPT,
     TOOL_GROUNDING,
 )
 from app.graph.state import AgentState
+from app.repositories.contacts import format_contact, match_contact
 from app.repositories.rag import get_rag_repository
 from app.tools.executor import ToolExecutor
 
@@ -23,6 +25,18 @@ class IntentRoute(BaseModel):
     """LLM은 의도만 분류. (숫자 인자 추출은 구조화 출력이 불안정하여 규칙으로 처리)"""
 
     intent: Literal["chat", "rag", "tool"] = Field(description="사용자 의도")
+
+
+# chat으로 오분류돼도 '사실 정보'를 묻는 신호가 있으면 rag로 강제 (근거 없는 답변/환각 방지)
+_INFO_SIGNALS = (
+    "문의", "연락처", "연락", "전화", "번호", "규정", "일정", "신청", "방법",
+    "장학", "기숙사", "생활관", "벌점", "졸업", "수강", "성적", "학점", "도서관",
+    "포털", "휴학", "복학", "전과", "재수강", "교육과정", "등록금", "증명", "취업",
+)
+
+
+def _looks_informational(text: str) -> bool:
+    return any(sig in text for sig in _INFO_SIGNALS)
 
 
 def _find_int(pattern: str, text: str) -> int | None:
@@ -102,6 +116,10 @@ async def router_node(state: AgentState) -> dict:
     except Exception:
         intent = "rag"
 
+    # 안전망: chat으로 분류됐어도 '사실 정보'를 묻는 질문이면 rag로 (근거 없는 환각 방지)
+    if intent == "chat" and _looks_informational(user_input):
+        intent = "rag"
+
     tool_name, tool_args = None, None
     if intent == "tool":
         tool_name, tool_args = resolve_tool(user_input)
@@ -112,13 +130,22 @@ async def router_node(state: AgentState) -> dict:
 
 
 async def rag_node(state: AgentState) -> dict:
-    """질문 관련 문서 검색."""
+    """질문 관련 문서 검색. 자료가 없거나 관련도가 낮으면 가드레일로 전환."""
     user_input = state["messages"][-1].content
     try:
         docs = await get_rag_repository().search_similar(user_input, k=5)
     except Exception:
         docs = []
-    return {"retrieved_docs": docs}
+
+    top_score = docs[0]["score"] if docs else 0.0
+    if not docs or top_score < config.GUARDRAIL_MIN_SCORE:
+        # 자료로 답할 수 없음 → 질문 주제에 맞는 문의처를 찾아 안내
+        return {
+            "retrieved_docs": docs,
+            "guardrail": True,
+            "contact": match_contact(user_input),
+        }
+    return {"retrieved_docs": docs, "guardrail": False, "contact": None}
 
 
 async def tool_node(state: AgentState) -> dict:
@@ -137,7 +164,10 @@ async def response_node(state: AgentState) -> dict:
     user_input = state["messages"][-1].content
     intent = state["intent"]
 
-    if intent == "rag":
+    if intent == "rag" and state.get("guardrail"):
+        contact_text = format_contact(state.get("contact"))
+        system_prompt = f"{RESPONSE_PROMPT}\n\n{GUARDRAIL_GROUNDING.format(contact=contact_text)}"
+    elif intent == "rag":
         context = "\n\n".join(
             f"[자료{i+1}] {d['content']}" for i, d in enumerate(state["retrieved_docs"])
         ) or "(관련 자료 없음)"
