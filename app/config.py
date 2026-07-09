@@ -25,4 +25,8 @@ DATABASE_URL = os.getenv(
 STRUCTURED_DIR = ROOT / "output" / "structured"
 PARSED_DIR = ROOT / "output" / "parsed"
 
+# 가드레일: RAG 최고 점수가 이 값보다 낮으면 '자료 없음'으로 보고 문의처 안내
+# (score = 코사인유사도 + 키워드보너스. 관련 문서는 대략 0.4~0.5+)
+GUARDRAIL_MIN_SCORE = float(os.getenv("GUARDRAIL_MIN_SCORE", "0.35"))
+
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
