@@ -12,9 +12,9 @@
 #   - Production 환경 최적화
 
 [project]
-name = "lumi-agent"
+name = "gachon-guider"
 version = "0.5.0"
-description = "루미(Lumi) - 버추얼 아이돌 AI 에이전트 서비스"
+description = "가천 가이드(gachon guider) : 가천대 인공지능학과 ~정보 가이드"
 readme = "README.md"
 requires-python = ">=3.11"
 
