@@ -15,22 +15,35 @@
 <body>
     <div class="container py-4">
         <div class="app-header text-center mb-4">
+            <span class="badge rounded-pill text-bg-primary mb-2">
+                Gachon AI Agent MVP
+            </span>
             <h1>AI 학과 길잡이</h1>
-            <p class="text-muted">
-                가천대학교 인공지능학과 학생을 위한 학교생활 안내 Agent
+            <p class="text-muted mb-0">
+                가천대학교 인공지능학과 학생을 위한 학사·수강·졸업 안내 Agent
             </p>
+        </div>
+
+        <div class="quick-question-wrapper mb-3">
+            <button class="quick-question">2학기 수강신청 기간 알려줘</button>
+            <button class="quick-question">사회봉사는 몇 시간 해야 해?</button>
+            <button class="quick-question">졸업하려면 뭐가 필요해?</button>
+            <button class="quick-question">복학 기간 알려줘</button>
         </div>
 
         <div class="chat-container card shadow-sm">
             <div id="chat-box" class="chat-box card-body">
                 <div class="message bot-message">
-                    안녕하세요! 인공지능학과 학교생활 안내 Agent입니다.<br />
-                    수강신청, 졸업요건, 전공 학습, 학사일정에 대해 질문해보세요.
+                    <div class="message-label">AI 학과 길잡이</div>
+                    <div class="message-content">
+                        안녕하세요! 인공지능학과 학교생활 안내 Agent입니다.<br />
+                        수강신청, 졸업요건, 전공 교육과정, 학사일정에 대해 질문해보세요.
+                    </div>
                 </div>
             </div>
 
-            <div class="card-footer">
-                <form id="chat-form" class="d-flex gap-2">
+            <div class="card-footer bg-white">
+                <form id="chat-form" class="chat-form">
                     <input
                         id="message-input"
                         type="text"
@@ -38,10 +51,13 @@
                         placeholder="예: 수강신청 일정 알려줘"
                         autocomplete="off"
                     />
-                    <button type="submit" class="btn btn-primary">
+                    <button id="send-button" type="submit" class="btn btn-primary">
                         전송
                     </button>
                 </form>
+                <div class="small text-muted mt-2">
+                    ※ 답변은 업로드된 공식 자료 기반이며, 최종 확인은 학교 공식 시스템 또는 담당 부서를 기준으로 해주세요.
+                </div>
             </div>
         </div>
     </div>
