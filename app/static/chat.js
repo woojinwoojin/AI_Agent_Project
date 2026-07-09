@@ -17,6 +17,25 @@ function addMessage(text, sender) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
+function addBotResponse(data) {
+    let text = data.answer;
+
+    if (data.sources && data.sources.length > 0) {
+        text += "\n\n[출처]";
+        data.sources.forEach((source, index) => {
+            text += `\n${index + 1}. ${source.title}`;
+            if (source.source) {
+                text += ` / ${source.source}`;
+            }
+            if (source.source_page) {
+                text += ` / ${source.source_page}`;
+            }
+        });
+    }
+
+    addMessage(text, "bot");
+}
+
 chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -43,7 +62,7 @@ chatForm.addEventListener("submit", async (event) => {
         }
 
         const data = await response.json();
-        addMessage(data.answer, "bot");
+        addBotResponse(data);
     } catch (error) {
         addMessage("오류가 발생했어요. 서버 상태를 확인해주세요.", "bot");
         console.error(error);
