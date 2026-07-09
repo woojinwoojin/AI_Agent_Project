@@ -6,6 +6,14 @@ const quickQuestions = document.querySelectorAll(".quick-question");
 
 let loadingMessage = null;
 
+function nowText() {
+    const now = new Date();
+    return now.toLocaleTimeString("ko-KR", {
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
 function scrollToBottom() {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
@@ -23,20 +31,80 @@ function createMessageElement(sender) {
     return messageDiv;
 }
 
-function addMessage(text, sender) {
-    const messageDiv = createMessageElement(sender);
+function createBotAvatar() {
+    const avatar = document.createElement("img");
+    avatar.src = "/static/img/mascot.png";
+    avatar.alt = "가천이";
+    avatar.classList.add("avatar");
+    return avatar;
+}
 
-    const labelDiv = document.createElement("div");
-    labelDiv.classList.add("message-label");
-    labelDiv.textContent = sender === "user" ? "나" : "AI 학과 길잡이";
+function addUserMessage(text) {
+    const messageDiv = createMessageElement("user");
 
-    const contentDiv = document.createElement("div");
-    contentDiv.classList.add("message-content");
-    contentDiv.textContent = text;
+    const wrap = document.createElement("div");
+    wrap.classList.add("bubble-wrap");
 
-    messageDiv.appendChild(labelDiv);
-    messageDiv.appendChild(contentDiv);
+    const bubble = document.createElement("div");
+    bubble.classList.add("bubble");
+    bubble.textContent = text;
 
+    const time = document.createElement("span");
+    time.classList.add("timestamp");
+    time.textContent = nowText();
+
+    wrap.appendChild(bubble);
+    wrap.appendChild(time);
+    messageDiv.appendChild(wrap);
+    chatBox.appendChild(messageDiv);
+    scrollToBottom();
+}
+
+function addBotMessage(text, options = {}) {
+    const messageDiv = createMessageElement("bot");
+    messageDiv.appendChild(createBotAvatar());
+
+    const wrap = document.createElement("div");
+    wrap.classList.add("bubble-wrap");
+
+    const bubble = document.createElement("div");
+    bubble.classList.add("bubble");
+    bubble.textContent = text;
+
+    wrap.appendChild(bubble);
+
+    if (options.sources && options.sources.length > 0) {
+        const sourcesBox = document.createElement("div");
+        sourcesBox.classList.add("sources-box");
+
+        const title = document.createElement("div");
+        title.classList.add("sources-title");
+        title.textContent = "참고한 자료";
+        sourcesBox.appendChild(title);
+
+        options.sources.forEach((source, index) => {
+            const item = document.createElement("div");
+            item.classList.add("source-item");
+
+            const sourceName = source.source || source.title || "출처 없음";
+            const page = source.page || source.source_page || "";
+            const score = source.score !== undefined
+                ? ` · 관련도 ${Number(source.score).toFixed(3)}`
+                : "";
+
+            item.textContent = `${index + 1}. ${sourceName}${page ? ` / ${page}` : ""}${score}`;
+            sourcesBox.appendChild(item);
+        });
+
+        wrap.appendChild(sourcesBox);
+    }
+
+    const time = document.createElement("span");
+    time.classList.add("timestamp");
+    time.textContent = nowText();
+    wrap.appendChild(time);
+
+    messageDiv.appendChild(wrap);
     chatBox.appendChild(messageDiv);
     scrollToBottom();
 
@@ -44,20 +112,21 @@ function addMessage(text, sender) {
 }
 
 function showLoading() {
-    loadingMessage = createMessageElement("bot");
+    const messageDiv = createMessageElement("bot");
+    messageDiv.appendChild(createBotAvatar());
 
-    const labelDiv = document.createElement("div");
-    labelDiv.classList.add("message-label");
-    labelDiv.textContent = "AI 학과 길잡이";
+    const wrap = document.createElement("div");
+    wrap.classList.add("bubble-wrap");
 
-    const contentDiv = document.createElement("div");
-    contentDiv.classList.add("message-content");
-    contentDiv.innerHTML = `<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span> 자료를 찾고 답변을 정리하는 중이에요.`;
+    const bubble = document.createElement("div");
+    bubble.classList.add("bubble");
+    bubble.innerHTML = `<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span> 자료를 찾고 답변을 정리하는 중이에요.`;
 
-    loadingMessage.appendChild(labelDiv);
-    loadingMessage.appendChild(contentDiv);
+    wrap.appendChild(bubble);
+    messageDiv.appendChild(wrap);
 
-    chatBox.appendChild(loadingMessage);
+    loadingMessage = messageDiv;
+    chatBox.appendChild(messageDiv);
     scrollToBottom();
 }
 
@@ -68,56 +137,13 @@ function hideLoading() {
     }
 }
 
-function addBotResponse(data) {
-    const messageDiv = createMessageElement("bot");
-
-    const labelDiv = document.createElement("div");
-    labelDiv.classList.add("message-label");
-    labelDiv.textContent = data.type === "guardrail" ? "확인 필요" : "AI 학과 길잡이";
-
-    const contentDiv = document.createElement("div");
-    contentDiv.classList.add("message-content");
-    contentDiv.textContent = data.answer;
-
-    messageDiv.appendChild(labelDiv);
-    messageDiv.appendChild(contentDiv);
-
-    if (data.sources && data.sources.length > 0) {
-        const sourcesDiv = document.createElement("div");
-        sourcesDiv.classList.add("sources-box");
-
-        const titleDiv = document.createElement("div");
-        titleDiv.classList.add("sources-title");
-        titleDiv.textContent = "참고한 자료";
-        sourcesDiv.appendChild(titleDiv);
-
-        data.sources.forEach((source, index) => {
-            const itemDiv = document.createElement("div");
-            itemDiv.classList.add("source-item");
-
-            const sourceName = source.source || "출처 없음";
-            const page = source.page ? ` / ${source.page}` : "";
-            const score = source.score !== undefined
-                ? ` / 관련도 ${Number(source.score).toFixed(3)}`
-                : "";
-
-            itemDiv.textContent = `${index + 1}. ${sourceName}${page}${score}`;
-            sourcesDiv.appendChild(itemDiv);
-        });
-
-        messageDiv.appendChild(sourcesDiv);
-    }
-
-    chatBox.appendChild(messageDiv);
-    scrollToBottom();
-}
-
 async function sendMessage(message) {
-    if (!message) {
+    const trimmed = message.trim();
+    if (!trimmed) {
         return;
     }
 
-    addMessage(message, "user");
+    addUserMessage(trimmed);
     messageInput.value = "";
     sendButton.disabled = true;
     showLoading();
@@ -128,7 +154,7 @@ async function sendMessage(message) {
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({ message }),
+            body: JSON.stringify({ message: trimmed }),
         });
 
         if (!response.ok) {
@@ -138,10 +164,13 @@ async function sendMessage(message) {
         const data = await response.json();
 
         hideLoading();
-        addBotResponse(data);
+        addBotMessage(data.answer, {
+            sources: data.sources || [],
+            type: data.type,
+        });
     } catch (error) {
         hideLoading();
-        addMessage("오류가 발생했어요. 서버 상태와 API Key, DB 연결 상태를 확인해주세요.", "bot");
+        addBotMessage("오류가 발생했어요. 서버 상태, DB 연결, API Key를 확인해주세요.");
         console.error(error);
     } finally {
         sendButton.disabled = false;
@@ -151,13 +180,12 @@ async function sendMessage(message) {
 
 chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const message = messageInput.value.trim();
-    await sendMessage(message);
+    await sendMessage(messageInput.value);
 });
 
 quickQuestions.forEach((button) => {
     button.addEventListener("click", async () => {
-        const message = button.textContent.trim();
-        await sendMessage(message);
+        const question = button.dataset.question || button.textContent;
+        await sendMessage(question);
     });
 });

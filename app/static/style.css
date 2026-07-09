@@ -33,9 +33,13 @@ body {
 .brand-logo {
     width: 72px;
     height: 72px;
-    object-fit: contain;
-    background: transparent;
-    mix-blend-mode: multiply;
+    object-fit: cover;
+    display: block;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    clip-path: inset(5px 0 0 0);
 }
 
 .brand-area h1 {
@@ -488,14 +492,25 @@ body {
         overflow-x: auto;
         justify-content: flex-start;
     }
+    .brand-logo-wrap {
+        width: 72px;
+        height: 72px;
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+    }
 
     .brand-logo {
-    width: 72px;
-    height: 72px;
-    object-fit: contain;
-    background: transparent;
-    mix-blend-mode: multiply;
-}
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        display: block;
+        border: 0 !important;
+        outline: 0 !important;
+        box-shadow: none !important;
+        transform: translateY(-4px);
+    }
 
     .brand-area h1 {
         font-size: 22px;
