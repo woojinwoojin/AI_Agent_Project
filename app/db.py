@@ -23,12 +23,19 @@ def init_schema(conn):
             source      TEXT NOT NULL,
             page        INT,
             category    TEXT,
+            category_l1 TEXT,
+            category_l2 TEXT,
             content     TEXT NOT NULL,
             metadata    JSONB DEFAULT '{{}}'::jsonb,
             embedding   VECTOR({dim})
         )
         """
     )
+    # 기존 DB(컬럼 없이 생성된 경우) 대응: 카테고리 컬럼을 안전하게 추가한다.
+    conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS category_l1 TEXT")
+    conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS category_l2 TEXT")
+    # 카테고리 필터 검색(2단계) 대비 인덱스
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_category_l1 ON documents (category_l1)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS courses (
