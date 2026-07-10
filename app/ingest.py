@@ -106,7 +106,7 @@ def ingest_all_documents(conn):
             uncategorized.append(source)
     if uncategorized:
         print(
-            "[documents] ⚠ 카테고리 미분류(NULL로 적재됨, manifest/헤더에 추가 필요): "
+            "[documents] [주의] 카테고리 미분류(NULL로 적재됨, manifest/헤더에 추가 필요): "
             + ", ".join(uncategorized)
         )
 
