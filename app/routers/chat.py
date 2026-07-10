@@ -196,3 +196,25 @@ async def chat_stream(req: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+'''
+@router.get("/chat/stream-test")
+async def chat_stream_test():
+    async def event_generator():
+        for token in ["안녕", "하세요. ", "이건 ", "SSE ", "테스트입니다."]:
+            print("SEND TOKEN:", token)
+            yield sse_event("delta", {"text": token})
+            await asyncio.sleep(1)
+
+        yield sse_event("done", {"message": "complete"})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+'''
