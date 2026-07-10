@@ -7,9 +7,19 @@ const quickQuestions = document.querySelectorAll(".quick-question");
 let loadingMessage = null;
 let isSending = false;
 
+if (!chatForm || !messageInput || !chatBox || !sendButton) {
+    console.error("필수 DOM 요소를 찾지 못했습니다.", {
+        chatForm,
+        messageInput,
+        chatBox,
+        sendButton,
+    });
+}
+
 function setControlsDisabled(disabled) {
     sendButton.disabled = disabled;
     messageInput.disabled = disabled;
+
     quickQuestions.forEach((btn) => {
         btn.disabled = disabled;
     });
@@ -83,29 +93,7 @@ function addBotMessage(text, options = {}) {
     wrap.appendChild(bubble);
 
     if (options.sources && options.sources.length > 0) {
-        const sourcesBox = document.createElement("div");
-        sourcesBox.classList.add("sources-box");
-
-        const title = document.createElement("div");
-        title.classList.add("sources-title");
-        title.textContent = "참고한 자료";
-        sourcesBox.appendChild(title);
-
-        options.sources.forEach((source, index) => {
-            const item = document.createElement("div");
-            item.classList.add("source-item");
-
-            const sourceName = source.source || source.title || "출처 없음";
-            const page = source.page || source.source_page || "";
-            const score = source.score !== undefined
-                ? ` · 관련도 ${Number(source.score).toFixed(3)}`
-                : "";
-
-            item.textContent = `${index + 1}. ${sourceName}${page ? ` / ${page}` : ""}${score}`;
-            sourcesBox.appendChild(item);
-        });
-
-        wrap.appendChild(sourcesBox);
+        appendSources(wrap, options.sources);
     }
 
     const time = document.createElement("span");
@@ -118,6 +106,25 @@ function addBotMessage(text, options = {}) {
     scrollToBottom();
 
     return messageDiv;
+}
+
+function createStreamingBotMessage() {
+    const messageDiv = createMessageElement("bot");
+    messageDiv.appendChild(createBotAvatar());
+
+    const wrap = document.createElement("div");
+    wrap.classList.add("bubble-wrap");
+
+    const bubble = document.createElement("div");
+    bubble.classList.add("bubble");
+    bubble.textContent = "질문을 분석하는 중이에요.";
+
+    wrap.appendChild(bubble);
+    messageDiv.appendChild(wrap);
+    chatBox.appendChild(messageDiv);
+    scrollToBottom();
+
+    return { messageDiv, wrap, bubble };
 }
 
 function showLoading() {
@@ -148,6 +155,7 @@ function hideLoading() {
 
 async function sendMessage(message) {
     const trimmed = message.trim();
+
     if (!trimmed || isSending) {
         return;
     }
@@ -157,10 +165,16 @@ async function sendMessage(message) {
 
     addUserMessage(trimmed);
     messageInput.value = "";
-    showLoading();
+
+    const { wrap, bubble } = createStreamingBotMessage();
+
+    let meta = null;
+    let buffer = "";
+    let hasStartedAnswer = false;
+    let hasFinished = false;
 
     try {
-        const response = await fetch("/api/chat", {
+        const response = await fetch("/api/chat/stream", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -168,26 +182,162 @@ async function sendMessage(message) {
             body: JSON.stringify({ message: trimmed }),
         });
 
-        if (!response.ok) {
-            throw new Error("서버 응답 오류");
+        if (!response.ok || !response.body) {
+            throw new Error("스트리밍 응답 오류");
         }
 
-        const data = await response.json();
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
 
-        hideLoading();
-        addBotMessage(data.answer, {
-            sources: data.sources || [],
-            type: data.type,
-        });
+        while (true) {
+            const { value, done } = await reader.read();
+
+            if (done) {
+                break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+
+            const events = buffer.split("\n\n");
+            buffer = events.pop();
+
+            for (const rawEvent of events) {
+                const parsed = parseSseEvent(rawEvent);
+
+                if (!parsed) {
+                    continue;
+                }
+
+                if (parsed.event === "status") {
+                    if (!hasStartedAnswer) {
+                        bubble.textContent = parsed.data.message || "처리 중이에요.";
+                    }
+                }
+
+                if (parsed.event === "meta") {
+                    meta = parsed.data;
+                    bubble.textContent = "";
+                }
+
+                if (parsed.event === "delta") {
+                    if (!hasStartedAnswer) {
+                        bubble.textContent = "";
+                        hasStartedAnswer = true;
+                    }
+
+                    bubble.textContent += parsed.data.text || "";
+                    scrollToBottom();
+                }
+
+                if (parsed.event === "error") {
+                    bubble.textContent = parsed.data.message || "스트리밍 중 오류가 발생했어요.";
+                    hasFinished = true;
+                }
+
+                if (parsed.event === "done") {
+                    if (meta && meta.sources && meta.sources.length > 0) {
+                        appendSources(wrap, meta.sources);
+                    }
+
+                    appendTimestampOnce(wrap);
+                    hasFinished = true;
+                    scrollToBottom();
+                }
+            }
+        }
+
+        if (!hasFinished) {
+            appendTimestampOnce(wrap);
+        }
     } catch (error) {
-        hideLoading();
-        addBotMessage("오류가 발생했어요. 서버 상태, DB 연결, API Key를 확인해주세요.");
+        bubble.textContent = "오류가 발생했어요. 서버 상태, DB 연결, API Key를 확인해주세요.";
+        appendTimestampOnce(wrap);
         console.error(error);
     } finally {
         isSending = false;
         setControlsDisabled(false);
         messageInput.focus();
     }
+}
+
+function parseSseEvent(rawEvent) {
+    const lines = rawEvent.split("\n");
+
+    let event = "message";
+    const dataLines = [];
+
+    lines.forEach((line) => {
+        const cleanLine = line.replace(/\r$/, "");
+
+        if (cleanLine.startsWith("event:")) {
+            event = cleanLine.slice(6).trim();
+        }
+
+        if (cleanLine.startsWith("data:")) {
+            dataLines.push(cleanLine.slice(5).trimStart());
+        }
+    });
+
+    if (dataLines.length === 0) {
+        return null;
+    }
+
+    const dataText = dataLines.join("\n");
+
+    try {
+        return {
+            event,
+            data: JSON.parse(dataText),
+        };
+    } catch (error) {
+        console.error("SSE parse error", error, rawEvent);
+        return null;
+    }
+}
+
+function appendSources(wrap, sources) {
+    if (!sources || sources.length === 0) {
+        return;
+    }
+
+    if (wrap.querySelector(".sources-box")) {
+        return;
+    }
+
+    const sourcesBox = document.createElement("div");
+    sourcesBox.classList.add("sources-box");
+
+    const title = document.createElement("div");
+    title.classList.add("sources-title");
+    title.textContent = "참고한 자료";
+    sourcesBox.appendChild(title);
+
+    sources.forEach((source, index) => {
+        const item = document.createElement("div");
+        item.classList.add("source-item");
+
+        const sourceName = source.source || source.title || "출처 없음";
+        const page = source.page || source.source_page || "";
+        const score = source.score !== undefined
+            ? ` · 관련도 ${Number(source.score).toFixed(3)}`
+            : "";
+
+        item.textContent = `${index + 1}. ${sourceName}${page ? ` / ${page}` : ""}${score}`;
+        sourcesBox.appendChild(item);
+    });
+
+    wrap.appendChild(sourcesBox);
+}
+
+function appendTimestampOnce(wrap) {
+    if (wrap.querySelector(".timestamp")) {
+        return;
+    }
+
+    const time = document.createElement("span");
+    time.classList.add("timestamp");
+    time.textContent = nowText();
+    wrap.appendChild(time);
 }
 
 chatForm.addEventListener("submit", async (event) => {

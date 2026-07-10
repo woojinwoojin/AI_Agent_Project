@@ -1,8 +1,15 @@
 """/api/chat — LangGraph 에이전트 (router → rag/tool → response)."""
+import asyncio
+import json
+
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
+from app import llm
+from app.graph.edges import route_by_intent
+from app.graph.nodes import build_response_inputs, rag_node, router_node, tool_node
 from app.graph.graph import get_graph
 from app.graph.state import create_initial_state
 
@@ -84,3 +91,108 @@ async def chat(req: ChatRequest):
         "sources": sources,
         "contact": contact,
     }
+
+def sse_event(event: str, data: dict) -> str:
+    return (
+        f"event: {event}\n"
+        f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+    )
+
+
+async def prepare_state_without_response(req: ChatRequest):
+    """LangGraph의 response_node 직전까지 실행한다.
+
+    즉,
+    router → rag/tool
+    까지만 수행하고, 최종 LLM 응답 생성은 stream=True로 따로 처리한다.
+    """
+    state = create_initial_state(
+        session_id=req.session_id or "default",
+        messages=[HumanMessage(content=req.message)],
+    )
+
+    router_update = await router_node(state)
+    state.update(router_update)
+
+    route = route_by_intent(state)
+
+    if route == "rag":
+        rag_update = await rag_node(state)
+        state.update(rag_update)
+
+    elif route == "tool":
+        tool_update = await tool_node(state)
+        state.update(tool_update)
+
+    return state
+
+@router.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    async def event_generator():
+        yield sse_event("status", {"message": "질문을 분석하는 중이에요."})
+
+        state = await prepare_state_without_response(req)
+
+        intent = state.get("intent")
+        sources: list[dict] = []
+        response_type = "chat_answer"
+
+        contact = state.get("contact")
+
+        if intent == "rag" and state.get("guardrail"):
+            response_type = "guardrail"
+            sources = _contact_sources(contact)
+
+        elif intent == "rag":
+            docs = state.get("retrieved_docs", [])
+            sources = _rag_sources(docs)
+            response_type = "rag_llm_answer"
+
+        elif intent == "tool":
+            tr = state.get("tool_result") or {}
+            data = tr.get("data") if isinstance(tr, dict) else None
+            if isinstance(data, dict) and data.get("출처"):
+                sources = [{"source": data["출처"]}]
+            response_type = "tool_answer"
+
+        yield sse_event(
+            "meta",
+            {
+                "type": response_type,
+                "intent": intent,
+                "tool_name": state.get("tool_name"),
+                "sources": sources,
+                "contact": contact,
+            },
+        )
+
+        system_prompt, user_input = build_response_inputs(state)
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_input},
+        ]
+
+        try:
+            for token in llm.chat_stream(messages):
+                yield sse_event("delta", {"text": token})
+
+            yield sse_event("done", {"message": "complete"})
+
+        except Exception as e:
+            yield sse_event(
+                "error",
+                {
+                    "message": f"스트리밍 중 오류가 발생했습니다: {str(e)}"
+                },
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

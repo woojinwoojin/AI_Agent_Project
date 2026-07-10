@@ -157,30 +157,40 @@ async def tool_node(state: AgentState) -> dict:
     )
     return {"tool_result": result}
 
-
-async def response_node(state: AgentState) -> dict:
-    """intent별 그라운딩을 붙여 최종 응답 생성."""
-    llm = get_llm()
+def build_response_inputs(state: AgentState) -> tuple[str, str]:
+    """최종 응답 생성을 위한 system_prompt, user_input 생성."""
     user_input = state["messages"][-1].content
     intent = state["intent"]
 
     if intent == "rag" and state.get("guardrail"):
         contact_text = format_contact(state.get("contact"))
         system_prompt = f"{RESPONSE_PROMPT}\n\n{GUARDRAIL_GROUNDING.format(contact=contact_text)}"
+
     elif intent == "rag":
         context = "\n\n".join(
-            f"[자료{i+1}] {d['content']}" for i, d in enumerate(state["retrieved_docs"])
+            f"[자료{i + 1}] {d['content']}" for i, d in enumerate(state["retrieved_docs"])
         ) or "(관련 자료 없음)"
         system_prompt = f"{RESPONSE_PROMPT}\n\n{RAG_GROUNDING.format(context=context)}"
+
     elif intent == "tool":
         tool_result = json.dumps(state["tool_result"], ensure_ascii=False)
         system_prompt = f"{RESPONSE_PROMPT}\n\n{TOOL_GROUNDING.format(tool_result=tool_result)}"
+
     else:
         system_prompt = RESPONSE_PROMPT
+
+    return system_prompt, user_input
+
+async def response_node(state: AgentState) -> dict:
+    """intent별 그라운딩을 붙여 최종 응답 생성."""
+    llm = get_llm()
+
+    system_prompt, user_input = build_response_inputs(state)
 
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_input),
     ]
+
     answer = await llm.ainvoke(messages)
     return {"messages": [AIMessage(content=answer.content)]}
