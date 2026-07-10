@@ -5,6 +5,15 @@ const sendButton = document.getElementById("send-button");
 const quickQuestions = document.querySelectorAll(".quick-question");
 
 let loadingMessage = null;
+let isSending = false;
+
+function setControlsDisabled(disabled) {
+    sendButton.disabled = disabled;
+    messageInput.disabled = disabled;
+    quickQuestions.forEach((btn) => {
+        btn.disabled = disabled;
+    });
+}
 
 function nowText() {
     const now = new Date();
@@ -139,13 +148,15 @@ function hideLoading() {
 
 async function sendMessage(message) {
     const trimmed = message.trim();
-    if (!trimmed) {
+    if (!trimmed || isSending) {
         return;
     }
 
+    isSending = true;
+    setControlsDisabled(true);
+
     addUserMessage(trimmed);
     messageInput.value = "";
-    sendButton.disabled = true;
     showLoading();
 
     try {
@@ -173,7 +184,8 @@ async function sendMessage(message) {
         addBotMessage("오류가 발생했어요. 서버 상태, DB 연결, API Key를 확인해주세요.");
         console.error(error);
     } finally {
-        sendButton.disabled = false;
+        isSending = false;
+        setControlsDisabled(false);
         messageInput.focus();
     }
 }
