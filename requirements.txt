@@ -7,6 +7,7 @@ pgvector
 openai
 python-dotenv
 requests
+beautifulsoup4
 
 # LangGraph 에이전트
 langgraph
