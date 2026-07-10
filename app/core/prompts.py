@@ -28,8 +28,19 @@ ROUTER_PROMPT = """
   - grade: 학년(1~4 정수), semester: 학기(1 또는 2 정수)
   - track: 트랙(선택). 반드시 "Intelligent SW" | "AIoT" | "Vision & Language" | "AI부트캠프" 중 하나
 
+## 카테고리 분류 (category_l1) — intent=rag 일 때만
+질문이 아래 6개 중 어디에 속하는지 하나만 고른다. 애매하면 "none"(전체 검색).
+- graduation: 졸업요건, 졸업학점, 전공/교양 이수기준, 외국어 졸업인증
+- course: 수강신청·정정·포기, 과목/교육과정, 트랙·학년별 개설과목, 학점 정보
+- academic_calendar: 개강·종강·시험·성적·수강신청 등 '날짜/일정'
+- social_service: 사회봉사 이수기준·제출방법
+- leave_return: 휴학, 복학
+- contact: 학과사무실·문의처·연락처·전화번호를 묻는 질문
+(chat/tool 이면 category_l1 은 null)
+
 ## 출력 필드
 - intent: "chat" | "rag" | "tool" (필수)
+- category_l1: 위 6개 중 하나 또는 "none" (intent=rag 아니면 "none")
 - tool_name: intent=tool일 때 "calc_graduation_progress" | "recommend_courses", 아니면 null
 - 위 도구 파라미터 필드: 해당될 때만 채우고 나머지는 비워둠(null)
 
@@ -37,7 +48,11 @@ ROUTER_PROMPT = """
 - "전공 30학점 들었는데 얼마 남았어?" -> intent=tool, tool_name=calc_graduation_progress, major_credits=30
 - "2학년 2학기 뭐 들어야 해?" -> intent=tool, tool_name=recommend_courses, grade=2, semester=2
 - "AIoT 트랙 3학년 1학기 과목 추천해줘" -> intent=tool, tool_name=recommend_courses, grade=3, semester=1, track="AIoT"
-- "인공지능학과 교육목표 알려줘" -> intent=rag
+- "인공지능학과 교육목표 알려줘" -> intent=rag, category_l1=course
+- "졸업하려면 몇 학점 필요해?" -> intent=rag, category_l1=graduation
+- "휴학 어떻게 해?" -> intent=rag, category_l1=leave_return
+- "수강신청 언제야?" -> intent=rag, category_l1=academic_calendar
+- "학과 사무실 전화번호 알려줘" -> intent=rag, category_l1=contact
 
 애매하면 rag로 분류해. 학점 계산/과목 추천처럼 '수치 처리'가 필요할 때만 tool.
 """
