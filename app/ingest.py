@@ -5,15 +5,40 @@
     python -m app.ingest
 """
 import json
+import re
 
 from app import config, db, embeddings
 
 CHUNK_TARGET = 700   # 청크 목표 길이(문자)
 CHUNK_MIN = 200      # 이보다 짧으면 다음 블록과 합침
 
+MANIFEST = config.PARSED_DIR / "_crawl_manifest.json"
+_CATEGORY_HEADER = re.compile(r"^>\s*카테고리:\s*([A-Za-z_]+)\s*/\s*([A-Za-z_]+)", re.M)
+
 
 def load_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_category_map() -> dict[str, tuple[str, str]]:
+    """_crawl_manifest.json → {source: (category_l1, category_l2)}."""
+    if not MANIFEST.exists():
+        return {}
+    out = {}
+    for m in load_json(MANIFEST):
+        if m.get("category_l1"):
+            out[m["source"]] = (m["category_l1"], m.get("category_l2"))
+    return out
+
+
+def category_for(source: str, md: str, cat_map: dict) -> tuple[str | None, str | None]:
+    """카테고리 결정: manifest 우선, 없으면 .md 헤더의 `> 카테고리: l1/l2` 파싱."""
+    if source in cat_map:
+        return cat_map[source]
+    m = _CATEGORY_HEADER.search(md)
+    if m:
+        return m.group(1), m.group(2)
+    return None, None
 
 
 def chunk_markdown(md: str) -> list[str]:
@@ -41,20 +66,24 @@ def chunk_markdown(md: str) -> list[str]:
     return [c for c in chunks if c.strip()]
 
 
-def ingest_documents(conn, source: str):
-    """파싱 마크다운을 청킹·임베딩하여 documents에 적재."""
+def ingest_documents(conn, source: str, cat_map: dict | None = None):
+    """파싱 마크다운을 청킹·임베딩하여 documents에 적재. 카테고리(l1/l2)도 함께 저장."""
     md_path = config.PARSED_DIR / f"{source}.md"
     md = md_path.read_text(encoding="utf-8")
+    cat_l1, cat_l2 = category_for(source, md, cat_map or {})
     chunks = chunk_markdown(md)
-    print(f"[documents] {source}: {len(chunks)}개 청크 임베딩...")
+    tag = f"{cat_l1}/{cat_l2}" if cat_l1 else "미분류"
+    print(f"[documents] {source} [{tag}]: {len(chunks)}개 청크 임베딩...")
 
     vectors = embeddings.embed_passages(chunks)
+    meta = {"source": source, "category_l1": cat_l1, "category_l2": cat_l2}
     with conn.cursor() as cur:
         for content, emb in zip(chunks, vectors):
             cur.execute(
-                "INSERT INTO documents (source, content, metadata, embedding) "
-                "VALUES (%s, %s, %s, %s)",
-                (source, content, json.dumps({"source": source}), emb),
+                "INSERT INTO documents "
+                "(source, category_l1, category_l2, content, metadata, embedding) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (source, cat_l1, cat_l2, content, json.dumps(meta), emb),
             )
     print(f"[documents] {source}: {len(chunks)}건 적재 완료 (dim={len(vectors[0])})")
 
@@ -66,8 +95,20 @@ def ingest_all_documents(conn):
     if not md_files:
         print("[documents] output/parsed/*.md 없음 — 건너뜀")
         return
+    cat_map = load_category_map()
+    uncategorized = []
     for md_path in md_files:
-        ingest_documents(conn, md_path.stem)
+        source = md_path.stem
+        ingest_documents(conn, source, cat_map)
+        if source not in cat_map and not _CATEGORY_HEADER.search(
+            md_path.read_text(encoding="utf-8")
+        ):
+            uncategorized.append(source)
+    if uncategorized:
+        print(
+            "[documents] [주의] 카테고리 미분류(NULL로 적재됨, manifest/헤더에 추가 필요): "
+            + ", ".join(uncategorized)
+        )
 
 
 def ingest_courses(conn):
@@ -156,10 +197,18 @@ def synthesize_structured_docs(conn):
     vectors = embeddings.embed_passages(docs)
     with conn.cursor() as cur:
         for content, emb in zip(docs, vectors):
+            # 접두어로 카테고리 부여: [교육과정]→course/curriculum, [졸업요건]→graduation/credit_requirement
+            if content.startswith("[졸업요건]"):
+                cat_l1, cat_l2 = "graduation", "credit_requirement"
+            else:
+                cat_l1, cat_l2 = "course", "curriculum"
+            meta = {"source": SRC, "kind": "structured",
+                    "category_l1": cat_l1, "category_l2": cat_l2}
             cur.execute(
-                "INSERT INTO documents (source, content, metadata, embedding) "
-                "VALUES (%s, %s, %s, %s)",
-                (SRC, content, json.dumps({"source": SRC, "kind": "structured"}), emb),
+                "INSERT INTO documents "
+                "(source, category_l1, category_l2, content, metadata, embedding) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (SRC, cat_l1, cat_l2, content, json.dumps(meta), emb),
             )
     print(f"[synth] {len(docs)}건 적재 완료")
 
