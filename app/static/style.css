@@ -115,7 +115,6 @@ body {
     background-size: cover;
     background-repeat: no-repeat;
     filter: saturate(1.05);
-    transform: scale(1.04);
 }
 
 .hero-side::after {
@@ -502,14 +501,16 @@ body {
     }
 
     .brand-logo {
-        width: 72px;
-        height: 72px;
+        width: 66px;
+        height: 66px;
         object-fit: contain;
         display: block;
         border: 0 !important;
         outline: 0 !important;
         box-shadow: none !important;
-        transform: translateY(-4px);
+        background: transparent !important;
+        transform: none;
+        clip-path: none;
     }
 
     .brand-area h1 {
