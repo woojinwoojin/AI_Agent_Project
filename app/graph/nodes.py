@@ -21,10 +21,21 @@ from app.repositories.rag import get_rag_repository
 from app.tools.executor import ToolExecutor
 
 
+# "none" = 카테고리 미분류(전체 검색). Optional(null)보다 명시 값이 구조화 출력에서 안정적.
+CATEGORY_L1 = Literal[
+    "graduation", "course", "academic_calendar",
+    "social_service", "leave_return", "contact", "none",
+]
+
+
 class IntentRoute(BaseModel):
-    """LLM은 의도만 분류. (숫자 인자 추출은 구조화 출력이 불안정하여 규칙으로 처리)"""
+    """LLM은 의도+카테고리만 분류. (숫자 인자 추출은 구조화 출력이 불안정하여 규칙으로 처리)"""
 
     intent: Literal["chat", "rag", "tool"] = Field(description="사용자 의도")
+    category_l1: CATEGORY_L1 = Field(
+        default="none",
+        description="intent=rag 일 때 질문이 속한 카테고리. 판단 어려우면 'none'.",
+    )
 
 
 # chat으로 오분류돼도 '사실 정보'를 묻는 신호가 있으면 rag로 강제 (근거 없는 답변/환각 방지)
@@ -54,6 +65,33 @@ def _detect_track(text: str) -> str | None:
         return "Intelligent SW"
     if "부트캠프" in text or "bootcamp" in t:
         return "AI부트캠프"
+    return None
+
+
+# 카테고리 키워드 분류(결정적). Solar 구조화출력이 category를 잘 안 채워 규칙을 주 경로로 쓴다.
+# 순서 = 우선순위(위에서부터 먼저 매칭). 시간/일정 신호는 course 보다 먼저 둬 '언제' 질문을 일정으로.
+_CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("social_service", ("사회봉사", "봉사활동", "봉사시간", "자원봉사", "봉사")),
+    ("leave_return", ("휴학", "복학", "휴학연기", "복적")),
+    ("graduation", ("졸업", "학위", "졸업인증", "외국어인증", "외국어 졸업", "졸업요건", "졸업학점")),
+    ("academic_calendar", (
+        "일정", "날짜", "언제", "며칠", "기간", "개강", "종강", "방학",
+        "시험", "중간고사", "기말고사", "성적", "등록금", "계절학기",
+    )),
+    ("course", (
+        "수강신청", "수강 신청", "수강정정", "수강 정정", "수강포기", "수강 포기",
+        "수강", "과목", "교육과정", "커리큘럼", "트랙", "시간표", "강의",
+        "전공필수", "전공선택", "이수구분",
+    )),
+    ("contact", ("전화번호", "연락처", "문의", "사무실", "어디에 물어", "어디로 문의")),
+]
+
+
+def classify_category(text: str) -> str | None:
+    """질문을 category_l1 로 분류(키워드 규칙). 매칭 없으면 None(전체 검색)."""
+    for cat, words in _CATEGORY_KEYWORDS:
+        if any(w in text for w in words):
+            return cat
     return None
 
 
@@ -108,11 +146,13 @@ async def router_node(state: AgentState) -> dict:
     """LLM으로 의도 분류 → tool이면 규칙 기반으로 도구/인자 결정."""
     user_input = state["messages"][-1].content
     structured_llm = get_llm().with_structured_output(IntentRoute)
+    llm_category = "none"
     try:
         result = await structured_llm.ainvoke(
             [SystemMessage(content=ROUTER_PROMPT), HumanMessage(content=user_input)]
         )
         intent = result.intent
+        llm_category = result.category_l1
     except Exception:
         intent = "rag"
 
@@ -120,20 +160,37 @@ async def router_node(state: AgentState) -> dict:
     if intent == "chat" and _looks_informational(user_input):
         intent = "rag"
 
+    # 카테고리 분류: 키워드 규칙 주 경로 + LLM 보조(규칙 미매칭 시).
+    # ("none"/contact 는 문서가 없어 필터 안 함 → 전체 검색 후 가드레일이 문의처 안내)
+    category_l1 = None
+    if intent == "rag":
+        category_l1 = classify_category(user_input)
+        if category_l1 is None and llm_category not in ("none", "contact"):
+            category_l1 = llm_category
+        if category_l1 == "contact":
+            category_l1 = None
+
     tool_name, tool_args = None, None
     if intent == "tool":
         tool_name, tool_args = resolve_tool(user_input)
         if tool_name is None:
             intent = "rag"  # 도구 판별 실패 → RAG로 폴백
 
-    return {"intent": intent, "tool_name": tool_name, "tool_args": tool_args}
+    return {
+        "intent": intent,
+        "category_l1": category_l1,
+        "tool_name": tool_name,
+        "tool_args": tool_args,
+    }
 
 
 async def rag_node(state: AgentState) -> dict:
     """질문 관련 문서 검색. 자료가 없거나 관련도가 낮으면 가드레일로 전환."""
     user_input = state["messages"][-1].content
     try:
-        docs = await get_rag_repository().search_similar(user_input, k=5)
+        docs = await get_rag_repository().search_similar(
+            user_input, k=5, category_l1=state.get("category_l1")
+        )
     except Exception:
         docs = []
 

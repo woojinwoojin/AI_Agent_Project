@@ -11,6 +11,9 @@ class AgentState(TypedDict):
     # Router가 결정한 의도
     intent: Literal["chat", "rag", "tool"] | None
 
+    # Router가 분류한 카테고리 (rag 검색 필터용). None이면 전체 검색.
+    category_l1: str | None
+
     # RAG 검색 결과 (문서 내용 + 출처)
     retrieved_docs: list[dict]
 
@@ -30,6 +33,7 @@ def create_initial_state(session_id: str, messages: list[BaseMessage] | None = N
     return AgentState(
         messages=messages or [],
         intent=None,
+        category_l1=None,
         retrieved_docs=[],
         tool_name=None,
         tool_args=None,

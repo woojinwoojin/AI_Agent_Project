@@ -5,11 +5,13 @@ from app import db, retrieval
 
 
 class RagRepository:
-    async def search_similar(self, query: str, k: int = 4) -> list[dict]:
+    async def search_similar(
+        self, query: str, k: int = 4, category_l1: str | None = None
+    ) -> list[dict]:
         def _search():
             conn = db.connect()
             try:
-                return retrieval.search(conn, query, k=k)
+                return retrieval.search(conn, query, k=k, category_l1=category_l1)
             finally:
                 conn.close()
 

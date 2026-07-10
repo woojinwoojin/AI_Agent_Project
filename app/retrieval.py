@@ -81,11 +81,45 @@ def deduplicate_hits(hits: list[dict]) -> list[dict]:
     return unique_hits
 
 
-def search(conn, query: str, k: int = 4, candidates: int = 12) -> list[dict]:
+def _fetch_candidates(conn, qlit: str, candidates: int, category_l1: str | None):
+    """pgvector 유사도 상위 후보 조회. category_l1 지정 시 해당 카테고리로 필터."""
+    if category_l1:
+        return conn.execute(
+            """
+            SELECT source, page, content, category_l1,
+                   1 - (embedding <=> %s::vector) AS vector_score
+            FROM documents
+            WHERE category_l1 = %s
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s
+            """,
+            (qlit, category_l1, qlit, candidates),
+        ).fetchall()
+    return conn.execute(
+        """
+        SELECT source, page, content, category_l1,
+               1 - (embedding <=> %s::vector) AS vector_score
+        FROM documents
+        ORDER BY embedding <=> %s::vector
+        LIMIT %s
+        """,
+        (qlit, qlit, candidates),
+    ).fetchall()
+
+
+def search(
+    conn,
+    query: str,
+    k: int = 4,
+    candidates: int = 12,
+    category_l1: str | None = None,
+) -> list[dict]:
     """질의와 가장 유사한 문서 청크 반환.
 
     1. query를 확장한다.
-    2. pgvector로 후보 문서를 넉넉히 가져온다.
+    2. pgvector로 후보 문서를 넉넉히 가져온다. (category_l1 지정 시 그 카테고리 안에서만)
+       - 멘토 원칙: 카테고리로 검색 공간을 먼저 좁힌다.
+       - 안전망: 카테고리 필터 결과가 비면 전체에서 다시 검색(오분류로 답을 놓치지 않도록).
     3. 원질문 키워드가 실제 문서에 포함되면 점수를 보정한다.
     4. 중복 문서를 제거한다.
     """
@@ -95,16 +129,12 @@ def search(conn, query: str, k: int = 4, candidates: int = 12) -> list[dict]:
 
     qlit = "[" + ",".join(map(str, qvec)) + "]"
 
-    rows = conn.execute(
-        """
-        SELECT source, page, content,
-               1 - (embedding <=> %s::vector) AS vector_score
-        FROM documents
-        ORDER BY embedding <=> %s::vector
-        LIMIT %s
-        """,
-        (qlit, qlit, candidates),
-    ).fetchall()
+    rows = _fetch_candidates(conn, qlit, candidates, category_l1)
+    used_category = category_l1
+    if category_l1 and not rows:
+        # 카테고리 필터로 아무것도 못 찾음 → 전체 검색으로 폴백
+        rows = _fetch_candidates(conn, qlit, candidates, None)
+        used_category = None
 
     hits = []
 
@@ -112,7 +142,8 @@ def search(conn, query: str, k: int = 4, candidates: int = 12) -> list[dict]:
         source = row[0]
         page = row[1]
         content = row[2]
-        vector_score = float(row[3])
+        doc_category = row[3]
+        vector_score = float(row[4])
 
         text_for_keyword = f"{source} {page} {content}"
         bonus = keyword_bonus(query, text_for_keyword)
@@ -123,6 +154,7 @@ def search(conn, query: str, k: int = 4, candidates: int = 12) -> list[dict]:
                 "source": source,
                 "page": page,
                 "content": content,
+                "category_l1": doc_category,
                 "vector_score": vector_score,
                 "keyword_bonus": bonus,
                 "score": final_score,
@@ -132,4 +164,6 @@ def search(conn, query: str, k: int = 4, candidates: int = 12) -> list[dict]:
     hits = deduplicate_hits(hits)
     hits.sort(key=lambda item: item["score"], reverse=True)
 
+    if hits:
+        hits[0]["_filtered_by"] = used_category  # 디버깅: 어떤 카테고리로 필터했는지
     return hits[:k]
