@@ -197,10 +197,18 @@ def synthesize_structured_docs(conn):
     vectors = embeddings.embed_passages(docs)
     with conn.cursor() as cur:
         for content, emb in zip(docs, vectors):
+            # 접두어로 카테고리 부여: [교육과정]→course/curriculum, [졸업요건]→graduation/credit_requirement
+            if content.startswith("[졸업요건]"):
+                cat_l1, cat_l2 = "graduation", "credit_requirement"
+            else:
+                cat_l1, cat_l2 = "course", "curriculum"
+            meta = {"source": SRC, "kind": "structured",
+                    "category_l1": cat_l1, "category_l2": cat_l2}
             cur.execute(
-                "INSERT INTO documents (source, content, metadata, embedding) "
-                "VALUES (%s, %s, %s, %s)",
-                (SRC, content, json.dumps({"source": SRC, "kind": "structured"}), emb),
+                "INSERT INTO documents "
+                "(source, category_l1, category_l2, content, metadata, embedding) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (SRC, cat_l1, cat_l2, content, json.dumps(meta), emb),
             )
     print(f"[synth] {len(docs)}건 적재 완료")
 

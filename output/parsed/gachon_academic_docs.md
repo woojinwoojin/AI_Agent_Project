@@ -1,5 +1,7 @@
 # 1학기 복학·휴학연기·예비수강·수강신청 일정
 
+> 카테고리: academic_calendar/semester
+
 영역: 학사일정
 분류: academic_calendar
 키워드: 1학기, 복학, 휴학연기, 예비수강, 수강신청, 등록금, 미등록휴학
