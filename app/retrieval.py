@@ -48,19 +48,6 @@ def expand_query(query: str) -> str:
     return f"{query} {' '.join(expanded_terms)}"
 
 
-def keyword_bonus(query: str, text: str) -> float:
-    query_tokens = tokenize(query)
-    text = normalize(text)
-
-    bonus = 0.0
-
-    for token in query_tokens:
-        if token in text:
-            bonus += 0.03
-
-    return min(bonus, 0.15)
-
-
 def deduplicate_hits(hits: list[dict]) -> list[dict]:
     seen = set()
     unique_hits = []
@@ -81,25 +68,31 @@ def deduplicate_hits(hits: list[dict]) -> list[dict]:
     return unique_hits
 
 
+_SELECT_COLS = (
+    "source, page, content, category_l1, priority, academic_year, keywords, "
+    "1 - (embedding <=> %s::vector) AS vector_score"
+)
+
+
 def _fetch_candidates(conn, qlit: str, candidates: int, category_l1: str | None):
-    """pgvector 유사도 상위 후보 조회. category_l1 지정 시 해당 카테고리로 필터."""
+    """pgvector 유사도 상위 후보 조회. category_l1 지정 시 해당 카테고리로 필터.
+    is_active=TRUE 문서만 대상으로 한다(멘토링 결과 §9)."""
     if category_l1:
         return conn.execute(
-            """
-            SELECT source, page, content, category_l1,
-                   1 - (embedding <=> %s::vector) AS vector_score
+            f"""
+            SELECT {_SELECT_COLS}
             FROM documents
-            WHERE category_l1 = %s
+            WHERE is_active = TRUE AND category_l1 = %s
             ORDER BY embedding <=> %s::vector
             LIMIT %s
             """,
             (qlit, category_l1, qlit, candidates),
         ).fetchall()
     return conn.execute(
-        """
-        SELECT source, page, content, category_l1,
-               1 - (embedding <=> %s::vector) AS vector_score
+        f"""
+        SELECT {_SELECT_COLS}
         FROM documents
+        WHERE is_active = TRUE
         ORDER BY embedding <=> %s::vector
         LIMIT %s
         """,
@@ -120,9 +113,10 @@ def search(
     2. pgvector로 후보 문서를 넉넉히 가져온다. (category_l1 지정 시 그 카테고리 안에서만)
        - 멘토 원칙: 카테고리로 검색 공간을 먼저 좁힌다.
        - 안전망: 카테고리 필터 결과가 비면 전체에서 다시 검색(오분류로 답을 놓치지 않도록).
-    3. 원질문 키워드가 실제 문서에 포함되면 점수를 보정한다.
+    3. lightweight reranker(vector/keyword/category/priority/recency)로 재정렬한다.
     4. 중복 문서를 제거한다.
     """
+    from app.services import reranker  # 지연 임포트(순환 방지)
 
     expanded_query = expand_query(query)
     qvec = embeddings.embed_query(expanded_query)
@@ -136,33 +130,22 @@ def search(
         rows = _fetch_candidates(conn, qlit, candidates, None)
         used_category = None
 
-    hits = []
-
-    for row in rows:
-        source = row[0]
-        page = row[1]
-        content = row[2]
-        doc_category = row[3]
-        vector_score = float(row[4])
-
-        text_for_keyword = f"{source} {page} {content}"
-        bonus = keyword_bonus(query, text_for_keyword)
-        final_score = vector_score + bonus
-
-        hits.append(
-            {
-                "source": source,
-                "page": page,
-                "content": content,
-                "category_l1": doc_category,
-                "vector_score": vector_score,
-                "keyword_bonus": bonus,
-                "score": final_score,
-            }
-        )
+    hits = [
+        {
+            "source": row[0],
+            "page": row[1],
+            "content": row[2],
+            "category_l1": row[3],
+            "priority": row[4],
+            "academic_year": row[5],
+            "keywords": row[6],
+            "vector_score": float(row[7]),
+        }
+        for row in rows
+    ]
 
     hits = deduplicate_hits(hits)
-    hits.sort(key=lambda item: item["score"], reverse=True)
+    hits = reranker.rerank(query, used_category, hits)
 
     if hits:
         hits[0]["_filtered_by"] = used_category  # 디버깅: 어떤 카테고리로 필터했는지

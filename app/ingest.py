@@ -7,9 +7,32 @@
 import json
 import re
 
-from app import config, db, embeddings
+from app import config, db, embeddings, retrieval
 
 CHUNK_TARGET = 700   # 청크 목표 길이(문자)
+
+# 권위 있는 '기준/요건' 문서만 priority 1(핵심), 나머지(절차·목록·일정)는 2.
+# priority 는 소수의 핵심 문서를 구분하기 위한 것이라 넓게 주지 않는다. (멘토링 결과 §8)
+_PRIORITY_BY_L2 = {
+    "foreign_language": 1, "credit_requirement": 1, "requirement": 1,
+}
+
+
+def doc_meta(source: str, content: str, cat_l2: str | None,
+             cat_l1: str | None = None) -> dict:
+    """reranker 용 메타 계산: priority, academic_year, semester, keywords."""
+    priority = _PRIORITY_BY_L2.get(cat_l2 or "", 2)
+    # 학년도는 '제목'에서만 추출한다. 본문 연도(예: 2015학번, 2022.06.04)는
+    # 문서의 학년도가 아니라 오탐이므로 쓰지 않는다.
+    ym = re.search(r"20\d{2}", source)
+    academic_year = int(ym.group()) if ym else None
+    sm = re.search(r"([1-2])\s*학기", source)
+    semester = f"{sm.group(1)}학기" if sm else None
+    # 키워드: 제목 토큰 + 카테고리명 (질문-문서 매칭 보조)
+    kws = retrieval.tokenize(source) + [c for c in (cat_l1, cat_l2) if c]
+    keywords = list(dict.fromkeys(kws))  # 중복 제거, 순서 유지
+    return {"priority": priority, "academic_year": academic_year,
+            "semester": semester, "keywords": keywords}
 CHUNK_MIN = 200      # 이보다 짧으면 다음 블록과 합침
 
 MANIFEST = config.PARSED_DIR / "_crawl_manifest.json"
@@ -76,14 +99,18 @@ def ingest_documents(conn, source: str, cat_map: dict | None = None):
     print(f"[documents] {source} [{tag}]: {len(chunks)}개 청크 임베딩...")
 
     vectors = embeddings.embed_passages(chunks)
-    meta = {"source": source, "category_l1": cat_l1, "category_l2": cat_l2}
     with conn.cursor() as cur:
         for content, emb in zip(chunks, vectors):
+            m = doc_meta(source, content, cat_l2, cat_l1)
+            meta = {"source": source, "category_l1": cat_l1, "category_l2": cat_l2,
+                    "priority": m["priority"], "academic_year": m["academic_year"]}
             cur.execute(
                 "INSERT INTO documents "
-                "(source, category_l1, category_l2, content, metadata, embedding) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                (source, cat_l1, cat_l2, content, json.dumps(meta), emb),
+                "(source, category_l1, category_l2, keywords, priority, "
+                " academic_year, semester, content, metadata, embedding) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (source, cat_l1, cat_l2, m["keywords"], m["priority"],
+                 m["academic_year"], m["semester"], content, json.dumps(meta), emb),
             )
     print(f"[documents] {source}: {len(chunks)}건 적재 완료 (dim={len(vectors[0])})")
 
@@ -202,13 +229,20 @@ def synthesize_structured_docs(conn):
                 cat_l1, cat_l2 = "graduation", "credit_requirement"
             else:
                 cat_l1, cat_l2 = "course", "curriculum"
+            m = doc_meta(SRC, content, cat_l2, cat_l1)
+            # 졸업요건(기준)은 핵심 근거 → priority 1. 교육과정 목록은 기본(2).
+            if cat_l2 == "credit_requirement":
+                m["priority"] = 1
             meta = {"source": SRC, "kind": "structured",
-                    "category_l1": cat_l1, "category_l2": cat_l2}
+                    "category_l1": cat_l1, "category_l2": cat_l2,
+                    "priority": m["priority"], "academic_year": m["academic_year"]}
             cur.execute(
                 "INSERT INTO documents "
-                "(source, category_l1, category_l2, content, metadata, embedding) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                (SRC, cat_l1, cat_l2, content, json.dumps(meta), emb),
+                "(source, category_l1, category_l2, keywords, priority, "
+                " academic_year, semester, content, metadata, embedding) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (SRC, cat_l1, cat_l2, m["keywords"], m["priority"],
+                 m["academic_year"], m["semester"], content, json.dumps(meta), emb),
             )
     print(f"[synth] {len(docs)}건 적재 완료")
 
