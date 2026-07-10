@@ -94,6 +94,7 @@ body {
     display: grid;
     grid-template-columns: 440px minmax(0, 1fr);
     gap: 28px;
+    align-items: start;
 }
 
 .hero-side {
@@ -232,7 +233,7 @@ body {
 }
 
 .chat-panel {
-    min-height: 720px;
+    height: 720px;
     display: flex;
     flex-direction: column;
     border-radius: 32px;
@@ -527,7 +528,7 @@ body {
     }
 
     .chat-panel {
-        min-height: calc(100vh - 150px);
+        height: calc(100vh - 150px);
         border-radius: 22px;
     }
 
