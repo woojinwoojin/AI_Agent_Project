@@ -19,23 +19,34 @@ def init_schema(conn):
     conn.execute(
         f"""
         CREATE TABLE IF NOT EXISTS documents (
-            id          BIGSERIAL PRIMARY KEY,
-            source      TEXT NOT NULL,
-            page        INT,
-            category    TEXT,
-            category_l1 TEXT,
-            category_l2 TEXT,
-            content     TEXT NOT NULL,
-            metadata    JSONB DEFAULT '{{}}'::jsonb,
-            embedding   VECTOR({dim})
+            id            BIGSERIAL PRIMARY KEY,
+            source        TEXT NOT NULL,
+            page          INT,
+            category      TEXT,
+            category_l1   TEXT,
+            category_l2   TEXT,
+            keywords      TEXT[],
+            priority      INTEGER DEFAULT 2,
+            academic_year INTEGER,
+            semester      TEXT,
+            is_active     BOOLEAN DEFAULT TRUE,
+            content       TEXT NOT NULL,
+            metadata      JSONB DEFAULT '{{}}'::jsonb,
+            embedding     VECTOR({dim})
         )
         """
     )
-    # 기존 DB(컬럼 없이 생성된 경우) 대응: 카테고리 컬럼을 안전하게 추가한다.
+    # 기존 DB(컬럼 없이 생성된 경우) 대응: 컬럼을 안전하게 추가한다. (멘토링 결과 §7)
     conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS category_l1 TEXT")
     conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS category_l2 TEXT")
-    # 카테고리 필터 검색(2단계) 대비 인덱스
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_category_l1 ON documents (category_l1)")
+    conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS keywords TEXT[]")
+    conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS priority INTEGER DEFAULT 2")
+    conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS academic_year INTEGER")
+    conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS semester TEXT")
+    conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE")
+    # 필터·정렬용 인덱스
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_category ON documents (category_l1, category_l2)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_active ON documents (is_active)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS courses (
