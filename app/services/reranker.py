@@ -11,6 +11,7 @@ final_score =
 
 각 부분 점수는 0~1 로 정규화한다.
 """
+
 from __future__ import annotations
 
 from app import retrieval
@@ -91,11 +92,7 @@ def rerank(query: str, predicted_category: list[str] | None, hits: list[dict]) -
         h["priority_score"] = ps
         h["recency_score"] = rs
         h["score"] = (
-            vs * W_VECTOR
-            + ks * W_KEYWORD
-            + cs * W_CATEGORY
-            + ps * W_PRIORITY
-            + rs * W_RECENCY
+            vs * W_VECTOR + ks * W_KEYWORD + cs * W_CATEGORY + ps * W_PRIORITY + rs * W_RECENCY
         )
     hits.sort(key=lambda item: item["score"], reverse=True)
     return hits

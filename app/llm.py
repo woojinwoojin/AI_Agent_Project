@@ -1,4 +1,5 @@
 """Upstage Solar LLM 클라이언트."""
+
 from collections.abc import Iterator
 
 from openai import OpenAI
@@ -16,6 +17,7 @@ def chat(messages: list[dict], temperature: float = 0.0) -> str:
         temperature=temperature,
     )
     return resp.choices[0].message.content
+
 
 def chat_stream(messages: list[dict], temperature: float = 0.0) -> Iterator[str]:
     """Solar 채팅 응답을 토큰 단위로 스트리밍."""

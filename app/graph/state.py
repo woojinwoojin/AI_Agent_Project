@@ -1,4 +1,5 @@
 """LangGraph 에이전트 상태 정의."""
+
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import BaseMessage

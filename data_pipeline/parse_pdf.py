@@ -10,10 +10,12 @@ Stage 1: Upstage Document Parse
     output/parsed/<name>.md             # 전체 마크다운 (RAG 청킹용)
     output/parsed/<name>.elements.json  # 요소 단위(페이지/카테고리 포함) 정형화 소스
 """
-import os
-import sys
+
 import json
+import os
 import pathlib
+import sys
+
 import requests
 from dotenv import load_dotenv
 
@@ -38,10 +40,10 @@ def parse(pdf_path: pathlib.Path) -> dict:
     headers = {"Authorization": f"Bearer {API_KEY}"}
     data = {
         "model": "document-parse",
-        "ocr": "force",                      # 이미지 기반이므로 OCR 강제
+        "ocr": "force",  # 이미지 기반이므로 OCR 강제
         "coordinates": "true",
         "output_formats": "['markdown', 'html', 'text']",
-        "base64_encoding": "['table']",      # 표는 base64 이미지도 함께 받아 검수에 활용
+        "base64_encoding": "['table']",  # 표는 base64 이미지도 함께 받아 검수에 활용
     }
 
     last_err = None
@@ -90,6 +92,7 @@ def save(result: dict, name: str):
 
     # 요약 출력
     from collections import Counter
+
     by_page = Counter(e["page"] for e in slim)
     by_cat = Counter(e["category"] for e in slim)
     print(f"\n[저장 완료] output/parsed/{name}.*")

@@ -1,5 +1,5 @@
 """/api/chat — LangGraph 에이전트 (router → rag/tool → response)."""
-import asyncio
+
 import json
 import logging
 
@@ -10,8 +10,8 @@ from pydantic import BaseModel
 
 from app import llm
 from app.graph.edges import route_by_intent
-from app.graph.nodes import build_response_inputs, rag_node, router_node, tool_node
 from app.graph.graph import get_graph
+from app.graph.nodes import build_response_inputs, rag_node, router_node, tool_node
 from app.graph.state import create_initial_state
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -94,11 +94,9 @@ async def chat(req: ChatRequest):
         "contact": contact,
     }
 
+
 def sse_event(event: str, data: dict) -> str:
-    return (
-        f"event: {event}\n"
-        f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-    )
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 async def prepare_state_without_response(req: ChatRequest):
@@ -127,6 +125,7 @@ async def prepare_state_without_response(req: ChatRequest):
         state.update(tool_update)
 
     return state
+
 
 @router.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
@@ -186,20 +185,23 @@ async def chat_stream(req: ChatRequest):
         except Exception as e:
             yield sse_event(
                 "error",
-                {
-                    "message": f"스트리밍 중 오류가 발생했습니다: {str(e)}"
-                },
+                {"message": f"스트리밍 중 오류가 발생했습니다: {str(e)}"},
             )
         finally:
-            logger.info(json.dumps({
-                "stage": "response",
-                "session_id": req.session_id or "default",
-                "question": req.message,
-                "intent": intent,
-                "guardrail": state.get("guardrail"),
-                "system_prompt": system_prompt,
-                "answer": "".join(answer_parts),
-            }, ensure_ascii=False))
+            logger.info(
+                json.dumps(
+                    {
+                        "stage": "response",
+                        "session_id": req.session_id or "default",
+                        "question": req.message,
+                        "intent": intent,
+                        "guardrail": state.get("guardrail"),
+                        "system_prompt": system_prompt,
+                        "answer": "".join(answer_parts),
+                    },
+                    ensure_ascii=False,
+                )
+            )
 
     return StreamingResponse(
         event_generator(),
@@ -211,7 +213,8 @@ async def chat_stream(req: ChatRequest):
         },
     )
 
-'''
+
+"""
 @router.get("/chat/stream-test")
 async def chat_stream_test():
     async def event_generator():
@@ -231,4 +234,4 @@ async def chat_stream_test():
             "X-Accel-Buffering": "no",
         },
     )
-'''
+"""

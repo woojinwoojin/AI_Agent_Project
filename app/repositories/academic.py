@@ -1,4 +1,5 @@
 """학사 정형 데이터 접근 (courses / graduation_requirements)."""
+
 import json
 
 from app import config, db
@@ -19,9 +20,7 @@ class AcademicRepository:
                 params.append(트랙)
             sql += " ORDER BY 이수구분, 교과목명"
             rows = conn.execute(sql, params).fetchall()
-            return [
-                {"교과목명": r[0], "이수구분": r[1], "학점": r[2], "트랙": r[3]} for r in rows
-            ]
+            return [{"교과목명": r[0], "이수구분": r[1], "학점": r[2], "트랙": r[3]} for r in rows]
         finally:
             conn.close()
 

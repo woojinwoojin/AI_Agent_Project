@@ -13,6 +13,7 @@
     python -m data_pipeline.crawl_gachon           # 전체 크롤
     python -m data_pipeline.crawl_gachon --dry     # 저장 없이 미리보기(제목/길이만)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,22 +38,26 @@ SOURCES = [
     {
         "name": "가천대 휴학 안내",
         "url": "https://www.gachon.ac.kr/kor/4021/subview.do",
-        "category_l1": "leave_return", "category_l2": "leave",
+        "category_l1": "leave_return",
+        "category_l2": "leave",
     },
     {
         "name": "가천대 복학 안내",
         "url": "https://www.gachon.ac.kr/kor/4022/subview.do",
-        "category_l1": "leave_return", "category_l2": "return",
+        "category_l1": "leave_return",
+        "category_l2": "return",
     },
     {
         "name": "가천대 졸업 안내",
         "url": "https://www.gachon.ac.kr/kor/3219/subview.do",
-        "category_l1": "graduation", "category_l2": "credit_requirement",
+        "category_l1": "graduation",
+        "category_l2": "credit_requirement",
     },
     {
         "name": "가천대 사회봉사교과목 안내",
         "url": "https://www.gachon.ac.kr/ESG/9032/subview.do",
-        "category_l1": "social_service", "category_l2": "requirement",
+        "category_l1": "social_service",
+        "category_l2": "requirement",
     },
     # --- 팀원 데이터 공백 보완분 ---
     # ※ 아래 두 건은 board 게시글(artclView)이라 1회 크롤 후 수동 큐레이션하여 고정했다.
@@ -69,12 +74,15 @@ PDFS = [
     {
         "name": "2026-1학기 학사일정",
         "url": "https://www.gachon.ac.kr/bbs/mana/499/142047/download.do",
-        "category_l1": "academic_calendar", "category_l2": "semester",
+        "category_l1": "academic_calendar",
+        "category_l2": "semester",
     },
 ]
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
 
 
 class TLSAdapter(HTTPAdapter):
@@ -101,23 +109,21 @@ _BLOCK = {"p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
 
 def _clean(text: str) -> str:
     t = text.replace("\xa0", " ")
-    t = re.sub(r"/\S*\.do\b", "", t)          # 링크 경로 토큰 제거(/kor/3135/subview.do 등)
+    t = re.sub(r"/\S*\.do\b", "", t)  # 링크 경로 토큰 제거(/kor/3135/subview.do 등)
     return re.sub(r"[ \t]+", " ", t).strip()
 
 
 def _table_to_md(table: Tag) -> str:
     rows = []
     for tr in table.find_all("tr"):
-        cells = [_clean(td.get_text(" ", strip=True))
-                 for td in tr.find_all(["th", "td"])]
+        cells = [_clean(td.get_text(" ", strip=True)) for td in tr.find_all(["th", "td"])]
         if cells:
             rows.append(cells)
     if not rows:
         return ""
     width = max(len(r) for r in rows)
     rows = [r + [""] * (width - len(r)) for r in rows]
-    out = ["| " + " | ".join(rows[0]) + " |",
-           "| " + " | ".join(["---"] * width) + " |"]
+    out = ["| " + " | ".join(rows[0]) + " |", "| " + " | ".join(["---"] * width) + " |"]
     for r in rows[1:]:
         out.append("| " + " | ".join(r) + " |")
     return "\n".join(out)
@@ -225,6 +231,7 @@ def extract_markdown(html: str) -> str:
 
 # ---------------- 실행 ----------------
 
+
 def crawl(dry: bool = False):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     session = make_session()
@@ -250,13 +257,15 @@ def crawl(dry: bool = False):
             continue
 
         (OUT_DIR / f"{src['name']}.md").write_text(body, encoding="utf-8")
-        manifest.append({
-            "source": src["name"],
-            "url": src["url"],
-            "category_l1": src["category_l1"],
-            "category_l2": src["category_l2"],
-            "chars": len(md),
-        })
+        manifest.append(
+            {
+                "source": src["name"],
+                "url": src["url"],
+                "category_l1": src["category_l1"],
+                "category_l2": src["category_l2"],
+                "chars": len(md),
+            }
+        )
         time.sleep(0.7)  # 예의상 지연
 
     if not dry and manifest:
@@ -284,7 +293,7 @@ def download_pdfs():
             path = pdf_dir / f"{p['name']}.pdf"
             path.write_bytes(r.content)
             print(f"[PDF] {p['name']} ({len(r.content):,} bytes) → {path}")
-            print(f"      다음: python data_pipeline/parse_pdf.py \"{path}\"")
+            print(f'      다음: python data_pipeline/parse_pdf.py "{path}"')
         except Exception as e:
             print(f"[PDF 실패] {p['name']}: {e}")
 

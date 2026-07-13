@@ -1,4 +1,5 @@
 """RAG 검색 리포지토리 (pgvector). 병합 시 이 구현만 Supabase로 교체하면 됨."""
+
 import asyncio
 
 from app import db, retrieval

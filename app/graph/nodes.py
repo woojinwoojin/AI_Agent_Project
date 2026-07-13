@@ -1,4 +1,5 @@
 """LangGraph 노드: router / rag / tool / response."""
+
 import json
 import logging
 import re
@@ -26,8 +27,13 @@ logger = logging.getLogger("app.rag")
 
 # "none" = 카테고리 미분류(전체 검색). Optional(null)보다 명시 값이 구조화 출력에서 안정적.
 CATEGORY_L1 = Literal[
-    "graduation", "course", "academic_calendar",
-    "social_service", "leave_return", "contact", "none",
+    "graduation",
+    "course",
+    "academic_calendar",
+    "social_service",
+    "leave_return",
+    "contact",
+    "none",
 ]
 
 
@@ -43,9 +49,33 @@ class IntentRoute(BaseModel):
 
 # chat으로 오분류돼도 '사실 정보'를 묻는 신호가 있으면 rag로 강제 (근거 없는 답변/환각 방지)
 _INFO_SIGNALS = (
-    "문의", "연락처", "연락", "전화", "번호", "규정", "일정", "신청", "방법",
-    "장학", "기숙사", "생활관", "벌점", "졸업", "수강", "성적", "학점", "도서관",
-    "포털", "휴학", "복학", "전과", "재수강", "교육과정", "등록금", "증명", "취업",
+    "문의",
+    "연락처",
+    "연락",
+    "전화",
+    "번호",
+    "규정",
+    "일정",
+    "신청",
+    "방법",
+    "장학",
+    "기숙사",
+    "생활관",
+    "벌점",
+    "졸업",
+    "수강",
+    "성적",
+    "학점",
+    "도서관",
+    "포털",
+    "휴학",
+    "복학",
+    "전과",
+    "재수강",
+    "교육과정",
+    "등록금",
+    "증명",
+    "취업",
 )
 
 
@@ -76,16 +106,50 @@ def _detect_track(text: str) -> str | None:
 _CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("social_service", ("사회봉사", "봉사활동", "봉사시간", "자원봉사", "봉사")),
     ("leave_return", ("휴학", "복학", "휴학연기", "복적")),
-    ("graduation", ("졸업", "학위", "졸업인증", "외국어인증", "외국어 졸업", "졸업요건", "졸업학점")),
-    ("academic_calendar", (
-        "일정", "날짜", "언제", "며칠", "기간", "개강", "종강", "방학",
-        "시험", "중간고사", "기말고사", "성적", "등록금", "계절학기",
-    )),
-    ("course", (
-        "수강신청", "수강 신청", "수강정정", "수강 정정", "수강포기", "수강 포기",
-        "수강", "과목", "교육과정", "커리큘럼", "트랙", "시간표", "강의",
-        "전공필수", "전공선택", "전필", "전선", "교필", "교선", "이수구분",
-    )),
+    (
+        "graduation",
+        ("졸업", "학위", "졸업인증", "외국어인증", "외국어 졸업", "졸업요건", "졸업학점"),
+    ),
+    (
+        "academic_calendar",
+        (
+            "일정",
+            "날짜",
+            "언제",
+            "며칠",
+            "기간",
+            "개강",
+            "종강",
+            "방학",
+            "시험",
+            "중간고사",
+            "기말고사",
+            "성적",
+            "등록금",
+            "계절학기",
+        ),
+    ),
+    (
+        "course",
+        (
+            "수강신청",
+            "수강 신청",
+            "수강정정",
+            "수강 정정",
+            "수강포기",
+            "수강 포기",
+            "수강",
+            "과목",
+            "교육과정",
+            "커리큘럼",
+            "트랙",
+            "시간표",
+            "강의",
+            "전공필수",
+            "전공선택",
+            "이수구분",
+        ),
+    ),
     ("contact", ("전화번호", "연락처", "문의", "사무실", "어디에 물어", "어디로 문의")),
 ]
 
@@ -104,7 +168,16 @@ def classify_categories(text: str) -> list[str]:
 # 키워드 표에 없는 표현(예: "복학 몇 월부터 가능해?")도 놓치지 않도록,
 # 시간 신호가 있으면 관련 category_l1을 추가로 후보에 넣는다(하드 필터가 아니라 확장).
 _TIME_SIGNAL_WORDS = (
-    "기간", "언제", "며칠", "날짜", "마감", "일정", "개강", "종강", "까지", "부터",
+    "기간",
+    "언제",
+    "며칠",
+    "날짜",
+    "마감",
+    "일정",
+    "개강",
+    "종강",
+    "까지",
+    "부터",
 )
 
 _RELATED_CATEGORIES: dict[str, tuple[str, ...]] = {
@@ -201,10 +274,8 @@ async def router_node(state: AgentState) -> dict:
     # 패턴을 찾으면 강제로 tool로 승격한다. LLM이 tool이라 했는데 규칙이 못 찾으면(드문
     # 오탐) rag로 폴백한다.
     tool_name, tool_args = resolve_tool(user_input)
-    tool_forced_by_rule = False
+
     if tool_name is not None:
-        if intent != "tool":
-            tool_forced_by_rule = True
         intent = "tool"
     elif intent == "tool":
         intent = "rag"  # LLM은 tool이라 했지만 규칙이 인자를 못 찾음 → RAG로 폴백
@@ -225,18 +296,27 @@ async def router_node(state: AgentState) -> dict:
         if not categories and llm_category not in ("none", "contact"):
             categories = [llm_category]
 
-    logger.info(json.dumps({
-        "stage": "router",
-        "session_id": state.get("session_id"),
-        "question": user_input,
-        "llm_intent": llm_intent,
-        "intent": intent,
-        "tool_forced_by_rule": tool_forced_by_rule,
-        "rule_categories": rule_categories,
-        "expanded_categories": expanded_categories,
-        "llm_category": llm_category,
-        "final_categories": categories,
-    }, ensure_ascii=False))
+    tool_name, tool_args = None, None
+    if intent == "tool":
+        tool_name, tool_args = resolve_tool(user_input)
+        if tool_name is None:
+            intent = "rag"  # 도구 판별 실패 → RAG로 폴백
+
+    logger.info(
+        json.dumps(
+            {
+                "stage": "router",
+                "session_id": state.get("session_id"),
+                "question": user_input,
+                "intent": intent,
+                "rule_categories": rule_categories,
+                "expanded_categories": expanded_categories,
+                "llm_category": llm_category,
+                "final_categories": categories,
+            },
+            ensure_ascii=False,
+        )
+    )
 
     return {
         "intent": intent,
@@ -263,14 +343,19 @@ async def rag_node(state: AgentState) -> dict:
     guardrail = not docs or top_score < config.GUARDRAIL_MIN_SCORE
     contact = match_contact(user_input) if guardrail else None
 
-    logger.info(json.dumps({
-        "stage": "guardrail",
-        "session_id": state.get("session_id"),
-        "question": user_input,
-        "top_score": top_score,
-        "guardrail": guardrail,
-        "contact_matched": contact is not None,
-    }, ensure_ascii=False))
+    logger.info(
+        json.dumps(
+            {
+                "stage": "guardrail",
+                "session_id": state.get("session_id"),
+                "question": user_input,
+                "top_score": top_score,
+                "guardrail": guardrail,
+                "contact_matched": contact is not None,
+            },
+            ensure_ascii=False,
+        )
+    )
 
     if guardrail:
         # 자료로 답할 수 없음 → 질문 주제에 맞는 문의처를 찾아 안내
@@ -287,6 +372,7 @@ async def tool_node(state: AgentState) -> dict:
     )
     return {"tool_result": result}
 
+
 def build_response_inputs(state: AgentState) -> tuple[str, str]:
     """최종 응답 생성을 위한 system_prompt, user_input 생성."""
     user_input = state["messages"][-1].content
@@ -297,9 +383,12 @@ def build_response_inputs(state: AgentState) -> tuple[str, str]:
         system_prompt = f"{RESPONSE_PROMPT}\n\n{GUARDRAIL_GROUNDING.format(contact=contact_text)}"
 
     elif intent == "rag":
-        context = "\n\n".join(
-            f"[자료{i + 1}] {d['content']}" for i, d in enumerate(state["retrieved_docs"])
-        ) or "(관련 자료 없음)"
+        context = (
+            "\n\n".join(
+                f"[자료{i + 1}] {d['content']}" for i, d in enumerate(state["retrieved_docs"])
+            )
+            or "(관련 자료 없음)"
+        )
         system_prompt = f"{RESPONSE_PROMPT}\n\n{RAG_GROUNDING.format(context=context)}"
 
     elif intent == "tool":
@@ -310,6 +399,7 @@ def build_response_inputs(state: AgentState) -> tuple[str, str]:
         system_prompt = RESPONSE_PROMPT
 
     return system_prompt, user_input
+
 
 async def response_node(state: AgentState) -> dict:
     """intent별 그라운딩을 붙여 최종 응답 생성."""

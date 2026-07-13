@@ -4,6 +4,7 @@ RAG로 답을 못 찾은 질문에 대해, 질문 주제에 맞는 부서 연락
 찾아 안내 문구의 근거로 제공한다. 모든 값은 contacts.json의 실제값을 사용하며
 임의 생성하지 않는다.
 """
+
 import json
 import re
 from functools import lru_cache
@@ -51,7 +52,7 @@ def match_contact(query: str) -> dict:
         if s > best_score:
             best_dept, best_score = dept, s
 
-    links = [l for l in data["링크"] if _kw_hits(query, l.get("키워드", []))][:2]
+    links = [link for link in data["링크"] if _kw_hits(query, link.get("키워드", []))][:2]
 
     if best_dept is None:
         base = data.get("기본안내", {})
@@ -92,8 +93,9 @@ def format_contact(c: dict) -> str:
             "학과사무실(인공지능학과 031-750-8668) 또는 교무처 학사지원팀(031-750-5045)으로 문의해 주세요."
         )
         lines = [base]
-        for l in (c.get("링크", []) if c else []):
-            lines.append(f"관련 링크 - {l['이름']}: {l['URL']}")
+        for link in c.get("링크", []) if c else []:
+            lines.append(f"관련 링크 - {link['이름']}: {link['URL']}")
+
         home = c.get("홈페이지") if c else None
         if home:
             lines.append(f"학교 홈페이지: {home}")
@@ -111,6 +113,6 @@ def format_contact(c: dict) -> str:
             lines.append(f"- {t['업무']}: {t['전화']}")
     if c.get("홈페이지"):
         lines.append(f"홈페이지: {c['홈페이지']}")
-    for l in c.get("링크", []):
-        lines.append(f"관련 링크 - {l['이름']}: {l['URL']}")
+    for link in c.get("링크", []):
+        lines.append(f"관련 링크 - {link['이름']}: {link['URL']}")
     return "\n".join(lines)

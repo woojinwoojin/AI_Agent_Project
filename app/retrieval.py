@@ -1,4 +1,5 @@
 """pgvector 기반 RAG 검색 + 간단 키워드 보정."""
+
 import json
 import logging
 import re
@@ -32,8 +33,19 @@ def tokenize(text: str) -> list[str]:
     tokens = re.findall(r"[가-힣a-zA-Z0-9]+", text)
 
     stopwords = {
-        "언제", "뭐야", "무엇", "어떻게", "알려줘", "궁금해",
-        "관련", "대해", "좀", "나는", "제가", "하면", "되나요",
+        "언제",
+        "뭐야",
+        "무엇",
+        "어떻게",
+        "알려줘",
+        "궁금해",
+        "관련",
+        "대해",
+        "좀",
+        "나는",
+        "제가",
+        "하면",
+        "되나요",
     }
 
     return [token for token in tokens if len(token) >= 2 and token not in stopwords]
@@ -177,26 +189,39 @@ def search(
     ]
 
     hits = deduplicate_hits(hits)
-    hits = reranker.rerank(query, used_categories, hits)
+
+    primary_category = None
+    if isinstance(used_categories, list) and used_categories:
+        primary_category = used_categories[0]
+    elif isinstance(used_categories, str):
+        primary_category = used_categories
+
+    hits = reranker.rerank(query, primary_category, hits)
     hits = hits[:k]
 
-    logger.info(json.dumps({
-        "stage": "retrieval",
-        "session_id": session_id,
-        "question": query,
-        "requested_categories": requested_categories,
-        "used_categories": used_categories,
-        "fallback": fallback,
-        "selected": [
+    logger.info(
+        json.dumps(
             {
-                "source": h["source"],
-                "category_l1": h["category_l1"],
-                "category_l2": h.get("category_l2"),
-                "vector_score": round(h["vector_score"], 4),
-                "score": round(h["score"], 4),
-            }
-            for h in hits
-        ],
-    }, ensure_ascii=False))
+                "stage": "retrieval",
+                "session_id": session_id,
+                "question": query,
+                "requested_categories": requested_categories,
+                "used_categories": used_categories,
+                "primary_category_for_rerank": primary_category,
+                "fallback": fallback,
+                "selected": [
+                    {
+                        "source": hit["source"],
+                        "category_l1": hit["category_l1"],
+                        "category_l2": hit.get("category_l2"),
+                        "vector_score": round(hit["vector_score"], 4),
+                        "score": round(hit["score"], 4),
+                    }
+                    for hit in hits
+                ],
+            },
+            ensure_ascii=False,
+        )
+    )
 
     return hits

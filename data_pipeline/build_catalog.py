@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Stage 2: 교육과정표 → 정형 JSON 카탈로그
 
@@ -16,6 +15,7 @@ Stage 1(parse_pdf.py) 출력의 표를 사람이 소계(小計)와 대조 검증
   output/structured/course_catalog.json
   output/structured/graduation_requirements.json
 """
+
 import json
 import pathlib
 from collections import defaultdict
@@ -52,7 +52,7 @@ COMMON = [
     # 1학년 1학기
     c("College English 1", "공통필수", 1, 0, 2, 1, 1),
     c("가천인세미나", "공통필수", 1, 0, 1, 1, 1),
-    c("AI-Ntree", "공통필수", 1, 0, 2, 1, 1),          # OCR 'Al-Ntree' 보정
+    c("AI-Ntree", "공통필수", 1, 0, 2, 1, 1),  # OCR 'Al-Ntree' 보정
     c("AI 중심세상", "공통필수", 2, 2, 0, 1, 1),
     c("프로그래밍기초", "전공필수", 3, 2, 1, 1, 1),
     c("소프트웨어수학", "전공필수", 3, 3, 0, 1, 1),
@@ -121,7 +121,7 @@ TRACK = [
 # AI부트캠프 교육과정 (전공선택)
 # ────────────────────────────────────────────────────────────
 BOOTCAMP = [
-    c("인공지능 입문", "전공선택", 3, 3, 0, 0, "매학기", "AI부트캠프"),   # 학년='전체'→0
+    c("인공지능 입문", "전공선택", 3, 3, 0, 0, "매학기", "AI부트캠프"),  # 학년='전체'→0
     c("머신러닝 및 실습", "전공선택", 3, 6, 3, 4, "매학기", "AI부트캠프"),
     c("생성형 AI 활용", "전공선택", 3, 6, 3, 4, "매학기", "AI부트캠프"),
     c("온디바이스 AI", "전공선택", 3, 6, 3, 4, "매학기", "AI부트캠프"),
@@ -146,7 +146,7 @@ GRADUATION = {
         "전공선택": 37,
         "공통필수": 11,
         "공통선택": 13,
-        "계열기초": None,   # 원문 '-' (해당 없음)
+        "계열기초": None,  # 원문 '-' (해당 없음)
     },
     "비고": "트랙 무관 공통 기준. 전공선택 37학점은 3개 트랙/부트캠프 과목에서 이수.",
 }
@@ -154,26 +154,32 @@ GRADUATION = {
 # 검증용 기대 소계: (그룹키) -> 학점 합
 EXPECTED_SUBTOTALS = {
     # 공통과정 (좌=1학기 / 우=2학기) 학점 소계
-    ("공통", 1, 1): 15, ("공통", 1, 2): 17,
-    ("공통", 2, 1): 14, ("공통", 2, 2): 14,
-    ("공통", 3, 1): 15, ("공통", 3, 2): 10,
-    ("공통", 4, 1): 10, ("공통", 4, 2): 6,
+    ("공통", 1, 1): 15,
+    ("공통", 1, 2): 17,
+    ("공통", 2, 1): 14,
+    ("공통", 2, 2): 14,
+    ("공통", 3, 1): 15,
+    ("공통", 3, 2): 10,
+    ("공통", 4, 1): 10,
+    ("공통", 4, 2): 6,
     # 단, 공통과정 소계에는 익명 '공통선택'(placeholder) 학점이 포함되어 있으므로
     # 아래 validate()는 명명 과목만 합산한 값과 '기대-placeholder'를 비교한다.
 }
 # 각 (학년,학기)별 익명 공통선택 placeholder 학점 (원문 소계 맞추기용)
 COMMON_ELECTIVE_PLACEHOLDER = {
-    (1, 1): 4,   # 2+2
-    (1, 2): 5,   # 2+3
-    (2, 1): 2,   # 2
-    (2, 2): 2,   # 2
+    (1, 1): 4,  # 2+2
+    (1, 2): 5,  # 2+3
+    (2, 1): 2,  # 2
+    (2, 2): 2,  # 2
     (3, 1): 0,
     (3, 2): 0,
     (4, 1): 0,
     (4, 2): 0,
 }
 TRACK_SUBTOTALS = {
-    "Intelligent SW": 15, "AIoT": 15, "Vision & Language": 12,
+    "Intelligent SW": 15,
+    "AIoT": 15,
+    "Vision & Language": 12,
 }
 BOOTCAMP_TOTAL = 27
 
@@ -189,7 +195,9 @@ def validate():
         named = common_by[(y, t)]
         ph = COMMON_ELECTIVE_PLACEHOLDER[(y, t)]
         if named + ph != expected:
-            errs.append(f"공통 {y}-{t}학기 소계 불일치: 명명 {named} + placeholder {ph} = {named+ph} ≠ 원문 {expected}")
+            errs.append(
+                f"공통 {y}-{t}학기 소계 불일치: 명명 {named} + placeholder {ph} = {named+ph} ≠ 원문 {expected}"
+            )
 
     # 2) 트랙 소계
     track_by = defaultdict(int)
@@ -251,7 +259,7 @@ def main():
     print(f"\n=== 카탈로그 요약 (총 {len(CATALOG)}과목) ===")
     for g, (n, cr) in sorted(by_gubun.items()):
         print(f"  {g}: {n}과목 / {cr}학점")
-    print(f"\n[저장] output/structured/course_catalog.json, graduation_requirements.json")
+    print("\n[저장] output/structured/course_catalog.json, graduation_requirements.json")
 
 
 if __name__ == "__main__":
