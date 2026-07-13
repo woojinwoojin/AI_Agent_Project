@@ -1,7 +1,11 @@
 """pgvector 기반 RAG 검색 + 간단 키워드 보정."""
+import json
+import logging
 import re
 
 from app import embeddings
+
+logger = logging.getLogger("app.retrieval")
 
 
 SYNONYM_MAP = {
@@ -69,7 +73,7 @@ def deduplicate_hits(hits: list[dict]) -> list[dict]:
 
 
 _SELECT_COLS = (
-    "source, page, content, category_l1, priority, academic_year, keywords, "
+    "source, page, content, category_l1, category_l2, priority, academic_year, keywords, "
     "1 - (embedding <=> %s::vector) AS vector_score"
 )
 
@@ -100,35 +104,62 @@ def _fetch_candidates(conn, qlit: str, candidates: int, category_l1: str | None)
     ).fetchall()
 
 
+def _fetch_candidates_multi(conn, qlit: str, candidates: int, categories: list[str]):
+    """카테고리별로 개별 조회 후 합친다.
+
+    category_l1 IN (...) 한 번에 조회하면 벡터 유사도가 조금이라도 높은
+    카테고리가 상위를 독식해 다른 후보 카테고리 문서가 아예 안 들어올 수 있다.
+    각 카테고리에서 최소 `candidates`개씩은 보장해 recall을 확보한다.
+    """
+    rows = []
+    for cat in categories:
+        rows.extend(_fetch_candidates(conn, qlit, candidates, cat))
+    return rows
+
+
 def search(
     conn,
     query: str,
     k: int = 4,
     candidates: int = 12,
-    category_l1: str | None = None,
+    category_l1: list[str] | str | None = None,
+    session_id: str | None = None,
 ) -> list[dict]:
     """질의와 가장 유사한 문서 청크 반환.
 
     1. query를 확장한다.
-    2. pgvector로 후보 문서를 넉넉히 가져온다. (category_l1 지정 시 그 카테고리 안에서만)
-       - 멘토 원칙: 카테고리로 검색 공간을 먼저 좁힌다.
+    2. pgvector로 후보 문서를 넉넉히 가져온다.
+       - category_l1에 여러 카테고리가 지정되면 카테고리별로 개별 조회 후 병합한다.
+         (하나의 category_l1만으로는 제도 설명과 일정 데이터가 다른 카테고리에
+         분산 저장된 복합 질문을 놓칠 수 있어, router가 후보 카테고리를 여러 개
+         넘길 수 있게 확장했다.)
        - 안전망: 카테고리 필터 결과가 비면 전체에서 다시 검색(오분류로 답을 놓치지 않도록).
-    3. lightweight reranker(vector/keyword/category/priority/recency)로 재정렬한다.
-    4. 중복 문서를 제거한다.
+    3. 중복 문서를 제거한다.
+    4. lightweight reranker(vector/keyword/category/priority/recency)로 재정렬한다.
     """
     from app.services import reranker  # 지연 임포트(순환 방지)
+
+    if isinstance(category_l1, str):
+        category_l1 = [category_l1]
+    requested_categories = category_l1
 
     expanded_query = expand_query(query)
     qvec = embeddings.embed_query(expanded_query)
 
     qlit = "[" + ",".join(map(str, qvec)) + "]"
 
-    rows = _fetch_candidates(conn, qlit, candidates, category_l1)
-    used_category = category_l1
-    if category_l1 and not rows:
+    if requested_categories:
+        rows = _fetch_candidates_multi(conn, qlit, candidates, requested_categories)
+    else:
+        rows = _fetch_candidates(conn, qlit, candidates, None)
+
+    used_categories = requested_categories
+    fallback = False
+    if requested_categories and not rows:
         # 카테고리 필터로 아무것도 못 찾음 → 전체 검색으로 폴백
         rows = _fetch_candidates(conn, qlit, candidates, None)
-        used_category = None
+        used_categories = None
+        fallback = True
 
     hits = [
         {
@@ -136,17 +167,36 @@ def search(
             "page": row[1],
             "content": row[2],
             "category_l1": row[3],
-            "priority": row[4],
-            "academic_year": row[5],
-            "keywords": row[6],
-            "vector_score": float(row[7]),
+            "category_l2": row[4],
+            "priority": row[5],
+            "academic_year": row[6],
+            "keywords": row[7],
+            "vector_score": float(row[8]),
         }
         for row in rows
     ]
 
     hits = deduplicate_hits(hits)
-    hits = reranker.rerank(query, used_category, hits)
+    hits = reranker.rerank(query, used_categories, hits)
+    hits = hits[:k]
 
-    if hits:
-        hits[0]["_filtered_by"] = used_category  # 디버깅: 어떤 카테고리로 필터했는지
-    return hits[:k]
+    logger.info(json.dumps({
+        "stage": "retrieval",
+        "session_id": session_id,
+        "question": query,
+        "requested_categories": requested_categories,
+        "used_categories": used_categories,
+        "fallback": fallback,
+        "selected": [
+            {
+                "source": h["source"],
+                "category_l1": h["category_l1"],
+                "category_l2": h.get("category_l2"),
+                "vector_score": round(h["vector_score"], 4),
+                "score": round(h["score"], 4),
+            }
+            for h in hits
+        ],
+    }, ensure_ascii=False))
+
+    return hits

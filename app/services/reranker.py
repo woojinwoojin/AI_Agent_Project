@@ -58,14 +58,23 @@ def recency_score(academic_year: int | None) -> float:
     return 0.3
 
 
-def category_score(predicted: str | None, doc_category: str | None) -> float:
-    """router 예측 카테고리와 문서 카테고리 일치 시 1.0. 예측 없으면 중립 0.5."""
+def category_score(predicted: list[str] | None, doc_category: str | None) -> float:
+    """router가 넘긴 category 후보 리스트 기준으로 점수를 매긴다.
+
+    - 예측 자체가 없으면(전체 검색) 중립 0.5.
+    - 문서 카테고리가 후보 리스트 안에 있으면: 주 카테고리(리스트 첫 항목)는 1.0,
+      함께 검색된 부 카테고리(예: 시간 신호로 추가된 academic_calendar)는 0.8.
+    - 후보 리스트에 없으면 0.3 (완전히 0점으로 배제하지 않는다 — 카테고리 오분류로
+      정답 문서가 전부 걸러지는 걸 막기 위한 최소한의 안전판).
+    """
     if not predicted:
         return 0.5
-    return 1.0 if predicted == doc_category else 0.0
+    if doc_category not in predicted:
+        return 0.3
+    return 1.0 if doc_category == predicted[0] else 0.8
 
 
-def rerank(query: str, predicted_category: str | None, hits: list[dict]) -> list[dict]:
+def rerank(query: str, predicted_category: list[str] | None, hits: list[dict]) -> list[dict]:
     """후보(hits)에 final_score 를 매기고 내림차순 정렬해 반환.
 
     각 hit 는 최소한 vector_score, content, category_l1, priority,

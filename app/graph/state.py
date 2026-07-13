@@ -11,8 +11,9 @@ class AgentState(TypedDict):
     # Router가 결정한 의도
     intent: Literal["chat", "rag", "tool"] | None
 
-    # Router가 분류한 카테고리 (rag 검색 필터용). None이면 전체 검색.
-    category_l1: str | None
+    # Router가 분류한 카테고리 후보들 (rag 검색 필터용). None이면 전체 검색.
+    # 하나의 category로 확정하지 않고, 관련 있을 수 있는 category_l1을 모두 담는다.
+    category_l1: list[str] | None
 
     # RAG 검색 결과 (문서 내용 + 출처)
     retrieved_docs: list[dict]
