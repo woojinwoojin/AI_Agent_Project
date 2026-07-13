@@ -29,7 +29,7 @@ _app_logger.propagate = False
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="AI 학과 길잡이 MVP")
+app = FastAPI(title="인공지능학과 길잡이 MVP")
 
 app.mount(
     "/static",
