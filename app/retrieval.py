@@ -208,13 +208,11 @@ def search(
 
     hits = deduplicate_hits(hits)
 
-    primary_category = None
-    if isinstance(used_categories, list) and used_categories:
-        primary_category = used_categories[0]
-    elif isinstance(used_categories, str):
-        primary_category = used_categories
-
-    hits = reranker.rerank(query, primary_category, hits)
+    # category_score()는 "후보 리스트 안에서 몇 번째인지"로 채점하므로 리스트
+    # 전체를 넘겨야 한다. 문자열 하나(예: primary_category)만 넘기면 파이썬의
+    # `in`이 부분 문자열 매칭으로 동작해 "course"가 "academic_calendar"에
+    # 없다고 오판되는 등 다른 카테고리 문서가 부당하게 낮은 점수를 받는다.
+    hits = reranker.rerank(query, used_categories, hits)
     hits = hits[:k]
 
     logger.info(
@@ -225,7 +223,6 @@ def search(
                 "question": query,
                 "requested_categories": requested_categories,
                 "used_categories": used_categories,
-                "primary_category_for_rerank": primary_category,
                 "fallback": fallback,
                 "selected": [
                     {
