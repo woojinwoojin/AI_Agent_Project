@@ -47,40 +47,44 @@ class IntentRoute(BaseModel):
     )
 
 
-# chat으로 오분류돼도 '사실 정보'를 묻는 신호가 있으면 rag로 강제 (근거 없는 답변/환각 방지)
-_INFO_SIGNALS = (
-    "문의",
-    "연락처",
-    "연락",
-    "전화",
-    "번호",
-    "규정",
-    "일정",
-    "신청",
-    "방법",
-    "장학",
-    "기숙사",
-    "생활관",
-    "벌점",
-    "졸업",
-    "수강",
-    "성적",
-    "학점",
-    "도서관",
-    "포털",
-    "휴학",
-    "복학",
-    "전과",
-    "재수강",
-    "교육과정",
-    "등록금",
-    "증명",
-    "취업",
+# chat 오분류 안전망: 예전엔 "사실 정보 신호 블랙리스트"에 있는 단어가 있어야만
+# rag로 되돌렸는데("졸업"/"학점"/... 없으면 그냥 chat 통과), "학년별로 알려줘"처럼
+# 목록에 없는 표현은 그대로 chat으로 빠져 근거 문서 하나 없이 LLM이 학과 정보를
+# (가짜 과목명·전화번호·이메일까지) 지어내는 사고로 이어졌다.
+# ROUTER_PROMPT 자체가 "chat은 인사/감사/잡담/사용법 정도로 매우 좁게"라고 명시하므로,
+# 블랙리스트 대신 화이트리스트로 뒤집는다: 진짜 잡담으로 보이는 짧은 인사/감사/작별/
+# 사용법 질문이 아니면 전부 rag로 보내 최소한 가드레일(문의처 안내)을 거치게 한다.
+_SMALLTALK_PATTERNS = (
+    "안녕",
+    "hi",
+    "hello",
+    "헬로",
+    "고마워",
+    "고마웠",
+    "감사",
+    "고맙",
+    "잘가",
+    "바이",
+    "bye",
+    "수고",
+    "뭘 도와",
+    "뭐 도와",
+    "무엇을 도와",
+    "어떻게 써",
+    "사용법",
+    "어떻게 사용",
+    "넌 누구",
+    "너는 누구",
+    "넌 뭐야",
+    "너는 뭐야",
+    "너 뭐하는",
 )
 
 
-def _looks_informational(text: str) -> bool:
-    return any(sig in text for sig in _INFO_SIGNALS)
+def _looks_like_smalltalk(text: str) -> bool:
+    stripped = text.strip()
+    low = stripped.lower()
+    return any(p in stripped or p in low for p in _SMALLTALK_PATTERNS)
 
 
 def _find_int(pattern: str, text: str) -> int | None:
@@ -274,14 +278,18 @@ async def router_node(state: AgentState) -> dict:
     # 패턴을 찾으면 강제로 tool로 승격한다. LLM이 tool이라 했는데 규칙이 못 찾으면(드문
     # 오탐) rag로 폴백한다.
     tool_name, tool_args = resolve_tool(user_input)
+    tool_forced_by_rule = False
 
     if tool_name is not None:
+        if intent != "tool":
+            tool_forced_by_rule = True
         intent = "tool"
     elif intent == "tool":
         intent = "rag"  # LLM은 tool이라 했지만 규칙이 인자를 못 찾음 → RAG로 폴백
 
-    # 안전망: chat으로 분류됐어도 '사실 정보'를 묻는 질문이면 rag로 (근거 없는 환각 방지)
-    if intent == "chat" and _looks_informational(user_input):
+    # 안전망: chat으로 분류됐어도 진짜 잡담(인사/감사/사용법 등)이 아니면 rag로 강제.
+    # (근거 문서 없이 LLM이 학과 정보를 자유생성하다 지어내는 환각 방지)
+    if intent == "chat" and not _looks_like_smalltalk(user_input):
         intent = "rag"
 
     # 카테고리 분류: 키워드 규칙(다중 매칭 + 시간 신호 확장) 주 경로 + LLM 보조(규칙 미매칭 시).
@@ -296,19 +304,15 @@ async def router_node(state: AgentState) -> dict:
         if not categories and llm_category not in ("none", "contact"):
             categories = [llm_category]
 
-    tool_name, tool_args = None, None
-    if intent == "tool":
-        tool_name, tool_args = resolve_tool(user_input)
-        if tool_name is None:
-            intent = "rag"  # 도구 판별 실패 → RAG로 폴백
-
     logger.info(
         json.dumps(
             {
                 "stage": "router",
                 "session_id": state.get("session_id"),
                 "question": user_input,
+                "llm_intent": llm_intent,
                 "intent": intent,
+                "tool_forced_by_rule": tool_forced_by_rule,
                 "rule_categories": rule_categories,
                 "expanded_categories": expanded_categories,
                 "llm_category": llm_category,
