@@ -30,6 +30,11 @@ class AgentState(TypedDict):
 
     session_id: str
 
+    # 리마인드 등 여러 턴에 걸친 사용자 확인 절차 진행 상태.
+    # {"type": "reminder", "stage": "confirm" | "awaiting_email", "content": str} | None
+    # 체크포인터로 턴 간 영속되며, 확인 절차가 없을 때는 None.
+    pending_action: dict | None
+
 
 def create_initial_state(session_id: str, messages: list[BaseMessage] | None = None) -> AgentState:
     return AgentState(
@@ -43,4 +48,5 @@ def create_initial_state(session_id: str, messages: list[BaseMessage] | None = N
         guardrail=False,
         contact=None,
         session_id=session_id,
+        pending_action=None,
     )

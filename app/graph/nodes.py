@@ -205,10 +205,35 @@ def expand_categories(text: str, categories: list[str]) -> list[str]:
     return expanded
 
 
+# 이메일 리마인드(ADR-007): 이메일 주소는 개인정보이므로 LLM 구조화 출력으로
+# 추출하지 않고, 이 정규식으로 규칙 기반 추출만 한다.
+_EMAIL_PATTERN = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+_REMINDER_SIGNALS = (
+    "리마인드",
+    "메일로 알려줘",
+    "메일로 보내",
+    "이메일로 알려줘",
+    "이메일로 보내",
+    "이메일 보내",
+    "메일 보내",
+    "메일 발송",
+    "이메일 발송",
+)
+
+
 def resolve_tool(text: str) -> tuple[str | None, dict | None]:
     """자연어에서 도구 이름과 인자를 규칙 기반으로 추출."""
     학년 = _find_int(r"([1-4])\s*학년", text)
     학기 = _find_int(r"([1-2])\s*학기", text)
+
+    # 0) 이메일 리마인드: 이메일 주소 + 리마인드/발송 요청 신호가 함께 있을 때만.
+    # 대화 상태가 없어 별도 확인 턴을 둘 수 없으므로, 사용자가 자기 이메일 주소를
+    # 직접 적어 보낸 것 자체를 승인으로 본다. 내용 중 날짜/시간 표현은
+    # ToolExecutor가 parse_remind_at()으로 해석해 reminder_requests에 예약
+    # 등록하고, 실제 발송은 scheduler가 예약 시각에 처리한다(Phase 2).
+    email_match = re.search(_EMAIL_PATTERN, text)
+    if email_match and any(w in text for w in _REMINDER_SIGNALS):
+        return "send_reminder_email", {"이메일": email_match.group(0), "내용": text}
 
     # 1) 졸업요건 계산: '학점' + (졸업/남음을 암시하는 표현)
     # "전선 30학점 들었는데 얼마나 더 들어야돼?"처럼 '졸업'/'남'이 없이
@@ -327,17 +352,29 @@ async def router_node(state: AgentState) -> dict:
         "category_l1": categories,
         "tool_name": tool_name,
         "tool_args": tool_args,
+        # 체크포인터로 턴 간 상태가 영속되므로, 이번 턴에 rag/tool을 안 타면
+        # 지난 턴의 검색 결과·가드레일·도구 결과가 그대로 남아있을 수 있다.
+        # 매 턴 router에서 명시적으로 리셋해 이전 턴 상태가 새지 않게 한다.
+        "retrieved_docs": [],
+        "guardrail": False,
+        "contact": None,
+        "tool_result": None,
     }
 
 
 async def rag_node(state: AgentState) -> dict:
     """질문 관련 문서 검색. 자료가 없거나 관련도가 낮으면 가드레일로 전환."""
     user_input = state["messages"][-1].content
+    categories = state.get("category_l1")
+    # 카테고리가 여러 개 걸린 복합 질문(예: "2학기 수강신청" -> academic_calendar
+    # + course)은 k=5로 좁히면 한 카테고리가 상위를 독식해 다른 카테고리 문서가
+    # 아예 잘려나갈 수 있다. 여유를 더 준다.
+    k = 8 if categories and len(categories) > 1 else 5
     try:
         docs = await get_rag_repository().search_similar(
             user_input,
-            k=5,
-            category_l1=state.get("category_l1"),
+            k=k,
+            category_l1=categories,
             session_id=state.get("session_id"),
         )
     except Exception:

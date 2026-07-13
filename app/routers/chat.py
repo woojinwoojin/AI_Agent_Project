@@ -1,6 +1,16 @@
-"""/api/chat — LangGraph 에이전트 (router → rag/tool → response)."""
+"""/api/chat — LangGraph 에이전트 (router → rag/tool → response).
 
-import asyncio
+체크포인터(session_id=thread_id별 대화 상태 영속) 도입 이후로는 매 요청마다
+새 초기 상태를 만들지 않고, 새 사용자 메시지만 그래프에 넘긴다. 이전 턴의
+상태는 체크포인터가 자동으로 복원해 병합한다.
+
+/chat/stream은 컴파일된 그래프를 astream_events로 실행해, 그래프 실행(라우팅
+·검색·도구 실행)은 정상적으로 체크포인터와 맞물리게 하면서도 response 노드의
+LLM 호출만 토큰 단위로 프론트에 전달한다(response_node 자체는 llm.ainvoke를
+쓰는 일반 호출이지만, astream_events로 감싸 실행하면 LangChain이 자동으로
+스트리밍 이벤트를 방출한다 — 별도의 수동 스트리밍 클라이언트 호출이 필요 없음).
+"""
+
 import json
 import logging
 
@@ -9,11 +19,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
-from app import llm
-from app.graph.edges import route_by_intent
 from app.graph.graph import get_graph
-from app.graph.nodes import build_response_inputs, rag_node, router_node, tool_node
-from app.graph.state import create_initial_state
 
 router = APIRouter(prefix="/api", tags=["chat"])
 logger = logging.getLogger("app.rag")
@@ -53,33 +59,21 @@ def _contact_sources(contact: dict | None) -> list[dict]:
     return srcs
 
 
-@router.post("/chat")
-async def chat(req: ChatRequest):
-    graph = get_graph()
-    state = create_initial_state(
-        session_id=req.session_id or "default",
-        messages=[HumanMessage(content=req.message)],
-    )
-    result = await graph.ainvoke(state)
-
-    answer = result["messages"][-1].content
-    intent = result.get("intent")
-
-    # 출처 표기 (프론트 chat.js는 {source, page, score} 객체 배열을 기대)
+def _build_meta(acc: dict) -> dict:
+    """router/rag/tool 노드가 채운 상태(acc)로부터 프론트용 meta를 구성."""
+    intent = acc.get("intent")
     sources: list[dict] = []
     response_type = "chat_answer"
+    contact = acc.get("contact")
 
-    contact = result.get("contact")
-
-    if intent == "rag" and result.get("guardrail"):
+    if intent == "rag" and acc.get("guardrail"):
         response_type = "guardrail"
         sources = _contact_sources(contact)
     elif intent == "rag":
-        docs = result.get("retrieved_docs", [])
-        sources = _rag_sources(docs)
+        sources = _rag_sources(acc.get("retrieved_docs") or [])
         response_type = "rag_llm_answer"
     elif intent == "tool":
-        tr = result.get("tool_result") or {}
+        tr = acc.get("tool_result") or {}
         data = tr.get("data") if isinstance(tr, dict) else None
         if isinstance(data, dict) and data.get("출처"):
             # page/score는 생략 → 프론트에서 undefined로 처리되어 표기 안 됨
@@ -87,100 +81,71 @@ async def chat(req: ChatRequest):
         response_type = "tool_answer"
 
     return {
-        "answer": answer,
         "type": response_type,
         "intent": intent,
-        "tool_name": result.get("tool_name"),
+        "tool_name": acc.get("tool_name"),
         "sources": sources,
         "contact": contact,
     }
+
+
+@router.post("/chat")
+async def chat(req: ChatRequest):
+    graph = get_graph()
+    thread_id = req.session_id or "default"
+    result = await graph.ainvoke(
+        {"messages": [HumanMessage(content=req.message)], "session_id": thread_id},
+        config={"configurable": {"thread_id": thread_id}},
+    )
+
+    answer = result["messages"][-1].content
+    return {"answer": answer, **_build_meta(result)}
 
 
 def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def prepare_state_without_response(req: ChatRequest):
-    """LangGraph의 response_node 직전까지 실행한다.
-
-    즉,
-    router → rag/tool
-    까지만 수행하고, 최종 LLM 응답 생성은 stream=True로 따로 처리한다.
-    """
-    state = create_initial_state(
-        session_id=req.session_id or "default",
-        messages=[HumanMessage(content=req.message)],
-    )
-
-    router_update = await router_node(state)
-    state.update(router_update)
-
-    route = route_by_intent(state)
-
-    if route == "rag":
-        rag_update = await rag_node(state)
-        state.update(rag_update)
-
-    elif route == "tool":
-        tool_update = await tool_node(state)
-        state.update(tool_update)
-
-    return state
-
-
 @router.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
+    thread_id = req.session_id or "default"
+    run_config = {"configurable": {"thread_id": thread_id}}
+
     async def event_generator():
         yield sse_event("status", {"message": "질문을 분석하는 중이에요."})
 
-        state = await prepare_state_without_response(req)
-
-        intent = state.get("intent")
-        sources: list[dict] = []
-        response_type = "chat_answer"
-
-        contact = state.get("contact")
-
-        if intent == "rag" and state.get("guardrail"):
-            response_type = "guardrail"
-            sources = _contact_sources(contact)
-
-        elif intent == "rag":
-            docs = state.get("retrieved_docs", [])
-            sources = _rag_sources(docs)
-            response_type = "rag_llm_answer"
-
-        elif intent == "tool":
-            tr = state.get("tool_result") or {}
-            data = tr.get("data") if isinstance(tr, dict) else None
-            if isinstance(data, dict) and data.get("출처"):
-                sources = [{"source": data["출처"]}]
-            response_type = "tool_answer"
-
-        yield sse_event(
-            "meta",
-            {
-                "type": response_type,
-                "intent": intent,
-                "tool_name": state.get("tool_name"),
-                "sources": sources,
-                "contact": contact,
-            },
-        )
-
-        system_prompt, user_input = build_response_inputs(state)
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_input},
-        ]
-
+        graph = get_graph()
+        acc: dict = {}
+        meta_sent = False
         answer_parts: list[str] = []
+
         try:
-            for token in llm.chat_stream(messages):
-                answer_parts.append(token)
-                yield sse_event("delta", {"text": token})
-                await asyncio.sleep(0)
+            async for ev in graph.astream_events(
+                {"messages": [HumanMessage(content=req.message)], "session_id": thread_id},
+                config=run_config,
+                version="v2",
+            ):
+                kind = ev["event"]
+                node = ev.get("metadata", {}).get("langgraph_node")
+
+                # router/rag/tool 노드가 반환한 부분 상태를 누적 (response 시작 전 meta 구성용)
+                if kind == "on_chain_end" and node in ("router", "rag", "tool"):
+                    output = ev["data"].get("output")
+                    if isinstance(output, dict):
+                        acc.update(output)
+
+                # response 노드의 LLM 호출만 토큰 단위로 프론트에 전달
+                if kind == "on_chat_model_stream" and node == "response":
+                    if not meta_sent:
+                        yield sse_event("meta", _build_meta(acc))
+                        meta_sent = True
+                    token = ev["data"]["chunk"].content
+                    if token:
+                        answer_parts.append(token)
+                        yield sse_event("delta", {"text": token})
+
+            if not meta_sent:
+                yield sse_event("meta", _build_meta(acc))
 
             yield sse_event("done", {"message": "complete"})
 
@@ -194,11 +159,11 @@ async def chat_stream(req: ChatRequest):
                 json.dumps(
                     {
                         "stage": "response",
-                        "session_id": req.session_id or "default",
+                        "session_id": thread_id,
                         "question": req.message,
-                        "intent": intent,
-                        "guardrail": state.get("guardrail"),
-                        "system_prompt": system_prompt,
+                        "intent": acc.get("intent"),
+                        "guardrail": acc.get("guardrail"),
+                        "tool_name": acc.get("tool_name"),
                         "answer": "".join(answer_parts),
                     },
                     ensure_ascii=False,
@@ -214,26 +179,3 @@ async def chat_stream(req: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
-
-
-"""
-@router.get("/chat/stream-test")
-async def chat_stream_test():
-    async def event_generator():
-        for token in ["안녕", "하세요. ", "이건 ", "SSE ", "테스트입니다."]:
-            print("SEND TOKEN:", token)
-            yield sse_event("delta", {"text": token})
-            await asyncio.sleep(1)
-
-        yield sse_event("done", {"message": "complete"})
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-"""
