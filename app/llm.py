@@ -8,7 +8,7 @@ from app import config
 _client = OpenAI(api_key=config.UPSTAGE_API_KEY, base_url=config.UPSTAGE_BASE_URL)
 
 
-def chat(messages: list[dict], temperature: float = 0.2) -> str:
+def chat(messages: list[dict], temperature: float = 0.0) -> str:
     """Solar 채팅 완성. messages=[{role, content}, ...]"""
     resp = _client.chat.completions.create(
         model=config.LLM_MODEL,
@@ -17,7 +17,7 @@ def chat(messages: list[dict], temperature: float = 0.2) -> str:
     )
     return resp.choices[0].message.content
 
-def chat_stream(messages: list[dict], temperature: float = 0.2) -> Iterator[str]:
+def chat_stream(messages: list[dict], temperature: float = 0.0) -> Iterator[str]:
     """Solar 채팅 응답을 토큰 단위로 스트리밍."""
     stream = _client.chat.completions.create(
         model=config.LLM_MODEL,
