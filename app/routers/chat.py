@@ -1,6 +1,7 @@
 """/api/chat — LangGraph 에이전트 (router → rag/tool → response)."""
 
 import json
+import logging
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,7 @@ from app.graph.nodes import build_response_inputs, rag_node, router_node, tool_n
 from app.graph.state import create_initial_state
 
 router = APIRouter(prefix="/api", tags=["chat"])
+logger = logging.getLogger("app.rag")
 
 
 class ChatRequest(BaseModel):
@@ -172,8 +174,10 @@ async def chat_stream(req: ChatRequest):
             {"role": "user", "content": user_input},
         ]
 
+        answer_parts: list[str] = []
         try:
             for token in llm.chat_stream(messages):
+                answer_parts.append(token)
                 yield sse_event("delta", {"text": token})
 
             yield sse_event("done", {"message": "complete"})
@@ -183,6 +187,16 @@ async def chat_stream(req: ChatRequest):
                 "error",
                 {"message": f"스트리밍 중 오류가 발생했습니다: {str(e)}"},
             )
+        finally:
+            logger.info(json.dumps({
+                "stage": "response",
+                "session_id": req.session_id or "default",
+                "question": req.message,
+                "intent": intent,
+                "guardrail": state.get("guardrail"),
+                "system_prompt": system_prompt,
+                "answer": "".join(answer_parts),
+            }, ensure_ascii=False))
 
     return StreamingResponse(
         event_generator(),
