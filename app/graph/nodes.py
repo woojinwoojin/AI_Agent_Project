@@ -274,10 +274,8 @@ async def router_node(state: AgentState) -> dict:
     # 패턴을 찾으면 강제로 tool로 승격한다. LLM이 tool이라 했는데 규칙이 못 찾으면(드문
     # 오탐) rag로 폴백한다.
     tool_name, tool_args = resolve_tool(user_input)
-    tool_forced_by_rule = False
+
     if tool_name is not None:
-        if intent != "tool":
-            tool_forced_by_rule = True
         intent = "tool"
     elif intent == "tool":
         intent = "rag"  # LLM은 tool이라 했지만 규칙이 인자를 못 찾음 → RAG로 폴백
