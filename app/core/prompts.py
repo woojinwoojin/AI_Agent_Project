@@ -48,6 +48,8 @@ ROUTER_PROMPT = """
 - "전공 30학점 들었는데 얼마 남았어?" -> intent=tool, tool_name=calc_graduation_progress, major_credits=30
 - "2학년 2학기 뭐 들어야 해?" -> intent=tool, tool_name=recommend_courses, grade=2, semester=2
 - "AIoT 트랙 3학년 1학기 과목 추천해줘" -> intent=tool, tool_name=recommend_courses, grade=3, semester=1, track="AIoT"
+- "전선 30학점 들었는데 얼마나 더 들어야돼?" -> intent=tool, tool_name=calc_graduation_progress, major_elective_credits=30
+  (전선=전공선택, 전필=전공필수, 교필=공통필수, 교선=공통선택 축약어도 같은 방식으로 분류)
 - "인공지능학과 교육목표 알려줘" -> intent=rag, category_l1=course
 - "졸업하려면 몇 학점 필요해?" -> intent=rag, category_l1=graduation
 - "휴학 어떻게 해?" -> intent=rag, category_l1=leave_return
