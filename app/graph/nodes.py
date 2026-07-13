@@ -206,19 +206,22 @@ def resolve_tool(text: str) -> tuple[str | None, dict | None]:
     학년 = _find_int(r"([1-4])\s*학년", text)
     학기 = _find_int(r"([1-2])\s*학기", text)
 
-    # 1) 졸업요건 계산: '학점' + ('졸업' 또는 '남')
-    if "학점" in text and ("졸업" in text or "남" in text):
+    # 1) 졸업요건 계산: '학점' + (졸업/남음을 암시하는 표현)
+    # "전선 30학점 들었는데 얼마나 더 들어야돼?"처럼 '졸업'/'남'이 없이
+    # 줄임말(전선·전필·교필·교선)만 쓰는 질문도 있어 트리거 표현을 넓혀둔다.
+    _REMAINING_SIGNALS = ("졸업", "남", "더", "부족", "채워야", "얼마나")
+    if "학점" in text and any(w in text for w in _REMAINING_SIGNALS):
         args: dict = {}
         for key, pat in [
-            ("전공필수", r"전공\s*필수\s*(\d+)"),
-            ("전공선택", r"전공\s*선택\s*(\d+)"),
-            ("공통필수", r"공통\s*필수\s*(\d+)"),
-            ("공통선택", r"공통\s*선택\s*(\d+)"),
+            ("전공필수", r"(?:전공\s*필수|전필)\s*(\d+)"),
+            ("전공선택", r"(?:전공\s*선택|전선)\s*(\d+)"),
+            ("공통필수", r"(?:공통\s*필수|교필)\s*(\d+)"),
+            ("공통선택", r"(?:공통\s*선택|교선)\s*(\d+)"),
         ]:
             v = _find_int(pat, text)
             if v is not None:
                 args[key] = v
-        if "전공필수" not in args and "전공선택" not in args:
+        if not args:
             v = _find_int(r"전공\D{0,3}(\d+)\s*학점", text) or _find_int(r"(\d+)\s*학점", text)
             if v is not None:
                 args["전공"] = v
@@ -240,6 +243,7 @@ def get_llm() -> ChatUpstage:
     return ChatUpstage(
         api_key=config.UPSTAGE_API_KEY,
         model=config.LLM_MODEL,
+        temperature=0.0,
         timeout=30,
         max_retries=2,
     )
@@ -249,7 +253,8 @@ tool_executor = ToolExecutor()
 
 
 async def router_node(state: AgentState) -> dict:
-    """LLM으로 의도 분류 → tool이면 규칙 기반으로 도구/인자 결정."""
+    """LLM으로 의도 분류 + 규칙 기반 도구 판별(resolve_tool)이 우선. 규칙이 도구
+    패턴을 찾으면 LLM 판단과 무관하게 intent=tool로 승격한다."""
     user_input = state["messages"][-1].content
     structured_llm = get_llm().with_structured_output(IntentRoute)
     llm_category = "none"
@@ -257,10 +262,25 @@ async def router_node(state: AgentState) -> dict:
         result = await structured_llm.ainvoke(
             [SystemMessage(content=ROUTER_PROMPT), HumanMessage(content=user_input)]
         )
-        intent = result.intent
+        llm_intent = result.intent
         llm_category = result.category_l1
     except Exception:
-        intent = "rag"
+        llm_intent = "rag"
+    intent = llm_intent
+
+    # 도구 판별: 카테고리 규칙과 동일하게 규칙(resolve_tool)을 주 경로로 쓴다.
+    # LLM structured output이 "학점 30 남았는데 얼마나 더?" 같은 축약 표현(전선/전필 등)에서
+    # intent를 tool 대신 rag로 잘못 분류하는 경우가 있어, LLM 판단과 무관하게 규칙이 도구
+    # 패턴을 찾으면 강제로 tool로 승격한다. LLM이 tool이라 했는데 규칙이 못 찾으면(드문
+    # 오탐) rag로 폴백한다.
+    tool_name, tool_args = resolve_tool(user_input)
+    tool_forced_by_rule = False
+    if tool_name is not None:
+        if intent != "tool":
+            tool_forced_by_rule = True
+        intent = "tool"
+    elif intent == "tool":
+        intent = "rag"  # LLM은 tool이라 했지만 규칙이 인자를 못 찾음 → RAG로 폴백
 
     # 안전망: chat으로 분류됐어도 '사실 정보'를 묻는 질문이면 rag로 (근거 없는 환각 방지)
     if intent == "chat" and _looks_informational(user_input):
