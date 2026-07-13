@@ -549,7 +549,6 @@ project-root/
 ├── tests/
 ├── Dockerfile
 ├── docker-compose.yml
-├── requirements.txt
 ├── .env.example
 └── README.md
 ```
@@ -575,14 +574,14 @@ DATABASE_URL=postgresql://user:password@localhost:5432/gachon_ai_agent
 python -m venv .venv
 source .venv/bin/activate
 
-pip install -r requirements.txt
+uv sync --extra dev
 ```
 
 Windows 환경에서는 다음 명령어를 사용할 수 있습니다.
 
 ```bash
 .venv\Scripts\activate
-pip install -r requirements.txt
+uv sync --extra dev
 ```
 
 ### 18.3 PostgreSQL 실행
