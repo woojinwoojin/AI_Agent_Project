@@ -188,15 +188,20 @@ async def chat_stream(req: ChatRequest):
                 {"message": f"스트리밍 중 오류가 발생했습니다: {str(e)}"},
             )
         finally:
-            logger.info(json.dumps({
-                "stage": "response",
-                "session_id": req.session_id or "default",
-                "question": req.message,
-                "intent": intent,
-                "guardrail": state.get("guardrail"),
-                "system_prompt": system_prompt,
-                "answer": "".join(answer_parts),
-            }, ensure_ascii=False))
+            logger.info(
+                json.dumps(
+                    {
+                        "stage": "response",
+                        "session_id": req.session_id or "default",
+                        "question": req.message,
+                        "intent": intent,
+                        "guardrail": state.get("guardrail"),
+                        "system_prompt": system_prompt,
+                        "answer": "".join(answer_parts),
+                    },
+                    ensure_ascii=False,
+                )
+            )
 
     return StreamingResponse(
         event_generator(),

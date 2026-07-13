@@ -1,4 +1,5 @@
 """pgvector 기반 RAG 검색 + 간단 키워드 보정."""
+
 import json
 import logging
 import re
@@ -188,31 +189,39 @@ def search(
     ]
 
     hits = deduplicate_hits(hits)
-    hits = reranker.rerank(query, used_category, hits)
 
-    if hits:
-        hits[0]["_filtered_by"] = used_category  # 디버깅: 어떤 카테고리로 필터했는지
-    return hits[:k]
-    hits = reranker.rerank(query, used_categories, hits)
+    primary_category = None
+    if isinstance(used_categories, list) and used_categories:
+        primary_category = used_categories[0]
+    elif isinstance(used_categories, str):
+        primary_category = used_categories
+
+    hits = reranker.rerank(query, primary_category, hits)
     hits = hits[:k]
 
-    logger.info(json.dumps({
-        "stage": "retrieval",
-        "session_id": session_id,
-        "question": query,
-        "requested_categories": requested_categories,
-        "used_categories": used_categories,
-        "fallback": fallback,
-        "selected": [
+    logger.info(
+        json.dumps(
             {
-                "source": h["source"],
-                "category_l1": h["category_l1"],
-                "category_l2": h.get("category_l2"),
-                "vector_score": round(h["vector_score"], 4),
-                "score": round(h["score"], 4),
-            }
-            for h in hits
-        ],
-    }, ensure_ascii=False))
+                "stage": "retrieval",
+                "session_id": session_id,
+                "question": query,
+                "requested_categories": requested_categories,
+                "used_categories": used_categories,
+                "primary_category_for_rerank": primary_category,
+                "fallback": fallback,
+                "selected": [
+                    {
+                        "source": hit["source"],
+                        "category_l1": hit["category_l1"],
+                        "category_l2": hit.get("category_l2"),
+                        "vector_score": round(hit["vector_score"], 4),
+                        "score": round(hit["score"], 4),
+                    }
+                    for hit in hits
+                ],
+            },
+            ensure_ascii=False,
+        )
+    )
 
     return hits

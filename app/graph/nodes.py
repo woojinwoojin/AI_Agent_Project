@@ -168,7 +168,16 @@ def classify_categories(text: str) -> list[str]:
 # 키워드 표에 없는 표현(예: "복학 몇 월부터 가능해?")도 놓치지 않도록,
 # 시간 신호가 있으면 관련 category_l1을 추가로 후보에 넣는다(하드 필터가 아니라 확장).
 _TIME_SIGNAL_WORDS = (
-    "기간", "언제", "며칠", "날짜", "마감", "일정", "개강", "종강", "까지", "부터",
+    "기간",
+    "언제",
+    "며칠",
+    "날짜",
+    "마감",
+    "일정",
+    "개강",
+    "종강",
+    "까지",
+    "부터",
 )
 
 _RELATED_CATEGORIES: dict[str, tuple[str, ...]] = {
@@ -275,16 +284,21 @@ async def router_node(state: AgentState) -> dict:
         if tool_name is None:
             intent = "rag"  # 도구 판별 실패 → RAG로 폴백
 
-    logger.info(json.dumps({
-        "stage": "router",
-        "session_id": state.get("session_id"),
-        "question": user_input,
-        "intent": intent,
-        "rule_categories": rule_categories,
-        "expanded_categories": expanded_categories,
-        "llm_category": llm_category,
-        "final_categories": categories,
-    }, ensure_ascii=False))
+    logger.info(
+        json.dumps(
+            {
+                "stage": "router",
+                "session_id": state.get("session_id"),
+                "question": user_input,
+                "intent": intent,
+                "rule_categories": rule_categories,
+                "expanded_categories": expanded_categories,
+                "llm_category": llm_category,
+                "final_categories": categories,
+            },
+            ensure_ascii=False,
+        )
+    )
 
     return {
         "intent": intent,
@@ -311,14 +325,19 @@ async def rag_node(state: AgentState) -> dict:
     guardrail = not docs or top_score < config.GUARDRAIL_MIN_SCORE
     contact = match_contact(user_input) if guardrail else None
 
-    logger.info(json.dumps({
-        "stage": "guardrail",
-        "session_id": state.get("session_id"),
-        "question": user_input,
-        "top_score": top_score,
-        "guardrail": guardrail,
-        "contact_matched": contact is not None,
-    }, ensure_ascii=False))
+    logger.info(
+        json.dumps(
+            {
+                "stage": "guardrail",
+                "session_id": state.get("session_id"),
+                "question": user_input,
+                "top_score": top_score,
+                "guardrail": guardrail,
+                "contact_matched": contact is not None,
+            },
+            ensure_ascii=False,
+        )
+    )
 
     if guardrail:
         # 자료로 답할 수 없음 → 질문 주제에 맞는 문의처를 찾아 안내
