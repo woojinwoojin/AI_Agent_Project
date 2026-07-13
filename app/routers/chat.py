@@ -96,7 +96,7 @@ async def chat(req: ChatRequest):
 
 
 def sse_event(event: str, data: dict) -> str:
-    return f"event: {event}\n" f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 async def prepare_state_without_response(req: ChatRequest):
