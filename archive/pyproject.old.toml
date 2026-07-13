@@ -26,16 +26,16 @@ requires-python = ">=3.11"
 dependencies = [
     # ===== LangGraph & LangChain =====
     "langgraph>=1.0.0",                  # 그래프 기반 에이전트 프레임워크
-    "langchain-core>=1.0.0",             # LangChain 핵심 모듈 
-    "langchain-upstage>=0.5.0",          # Upstage Solar API 연동 
+    "langchain-core>=1.0.0",             # LangChain 핵심 모듈
+    "langchain-upstage>=0.5.0",          # Upstage Solar API 연동
     "langchain-community>=0.3.0",        # 커뮤니티 통합 모듈
 
     # ===== Web Framework =====
-    "fastapi>=0.125.0",                  # 비동기 웹 프레임워크 
+    "fastapi>=0.125.0",                  # 비동기 웹 프레임워크
     "uvicorn[standard]>=0.32.0",         # ASGI 서버
 
     # ===== Database & Cache =====
-    "supabase>=2.20.0",                  # Supabase Python 클라이언트 
+    "supabase>=2.20.0",                  # Supabase Python 클라이언트
 
     # ===== Configuration =====
     "pydantic>=2.0.0",                   # 데이터 검증

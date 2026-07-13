@@ -22,6 +22,7 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 # /api/chat 은 LangGraph 에이전트 라우터가 담당 (router → rag/tool → response)
 app.include_router(chat.router)
 
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse(

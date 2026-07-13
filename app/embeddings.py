@@ -1,4 +1,5 @@
 """Upstage 임베딩 클라이언트 (OpenAI 호환)."""
+
 from openai import OpenAI
 
 from app import config

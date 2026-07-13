@@ -1,6 +1,8 @@
 """애플리케이션 설정 (.env 로드)."""
+
 import os
 import pathlib
+
 from dotenv import load_dotenv
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -17,9 +19,7 @@ EMBED_MODEL_QUERY = os.getenv("EMBED_MODEL_QUERY", "embedding-query")
 EMBED_DIM = int(os.getenv("EMBED_DIM", "4096"))
 
 # PostgreSQL + pgvector
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/gachon_ai"
-)
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/gachon_ai")
 
 # 데이터 경로
 STRUCTURED_DIR = ROOT / "output" / "structured"

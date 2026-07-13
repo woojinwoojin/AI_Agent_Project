@@ -1,4 +1,5 @@
 """LangGraph 노드: router / rag / tool / response."""
+
 import json
 import re
 from typing import Literal
@@ -20,11 +21,15 @@ from app.repositories.contacts import format_contact, match_contact
 from app.repositories.rag import get_rag_repository
 from app.tools.executor import ToolExecutor
 
-
 # "none" = 카테고리 미분류(전체 검색). Optional(null)보다 명시 값이 구조화 출력에서 안정적.
 CATEGORY_L1 = Literal[
-    "graduation", "course", "academic_calendar",
-    "social_service", "leave_return", "contact", "none",
+    "graduation",
+    "course",
+    "academic_calendar",
+    "social_service",
+    "leave_return",
+    "contact",
+    "none",
 ]
 
 
@@ -40,9 +45,33 @@ class IntentRoute(BaseModel):
 
 # chat으로 오분류돼도 '사실 정보'를 묻는 신호가 있으면 rag로 강제 (근거 없는 답변/환각 방지)
 _INFO_SIGNALS = (
-    "문의", "연락처", "연락", "전화", "번호", "규정", "일정", "신청", "방법",
-    "장학", "기숙사", "생활관", "벌점", "졸업", "수강", "성적", "학점", "도서관",
-    "포털", "휴학", "복학", "전과", "재수강", "교육과정", "등록금", "증명", "취업",
+    "문의",
+    "연락처",
+    "연락",
+    "전화",
+    "번호",
+    "규정",
+    "일정",
+    "신청",
+    "방법",
+    "장학",
+    "기숙사",
+    "생활관",
+    "벌점",
+    "졸업",
+    "수강",
+    "성적",
+    "학점",
+    "도서관",
+    "포털",
+    "휴학",
+    "복학",
+    "전과",
+    "재수강",
+    "교육과정",
+    "등록금",
+    "증명",
+    "취업",
 )
 
 
@@ -73,16 +102,50 @@ def _detect_track(text: str) -> str | None:
 _CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("social_service", ("사회봉사", "봉사활동", "봉사시간", "자원봉사", "봉사")),
     ("leave_return", ("휴학", "복학", "휴학연기", "복적")),
-    ("graduation", ("졸업", "학위", "졸업인증", "외국어인증", "외국어 졸업", "졸업요건", "졸업학점")),
-    ("academic_calendar", (
-        "일정", "날짜", "언제", "며칠", "기간", "개강", "종강", "방학",
-        "시험", "중간고사", "기말고사", "성적", "등록금", "계절학기",
-    )),
-    ("course", (
-        "수강신청", "수강 신청", "수강정정", "수강 정정", "수강포기", "수강 포기",
-        "수강", "과목", "교육과정", "커리큘럼", "트랙", "시간표", "강의",
-        "전공필수", "전공선택", "이수구분",
-    )),
+    (
+        "graduation",
+        ("졸업", "학위", "졸업인증", "외국어인증", "외국어 졸업", "졸업요건", "졸업학점"),
+    ),
+    (
+        "academic_calendar",
+        (
+            "일정",
+            "날짜",
+            "언제",
+            "며칠",
+            "기간",
+            "개강",
+            "종강",
+            "방학",
+            "시험",
+            "중간고사",
+            "기말고사",
+            "성적",
+            "등록금",
+            "계절학기",
+        ),
+    ),
+    (
+        "course",
+        (
+            "수강신청",
+            "수강 신청",
+            "수강정정",
+            "수강 정정",
+            "수강포기",
+            "수강 포기",
+            "수강",
+            "과목",
+            "교육과정",
+            "커리큘럼",
+            "트랙",
+            "시간표",
+            "강의",
+            "전공필수",
+            "전공선택",
+            "이수구분",
+        ),
+    ),
     ("contact", ("전화번호", "연락처", "문의", "사무실", "어디에 물어", "어디로 문의")),
 ]
 
@@ -214,6 +277,7 @@ async def tool_node(state: AgentState) -> dict:
     )
     return {"tool_result": result}
 
+
 def build_response_inputs(state: AgentState) -> tuple[str, str]:
     """최종 응답 생성을 위한 system_prompt, user_input 생성."""
     user_input = state["messages"][-1].content
@@ -224,9 +288,12 @@ def build_response_inputs(state: AgentState) -> tuple[str, str]:
         system_prompt = f"{RESPONSE_PROMPT}\n\n{GUARDRAIL_GROUNDING.format(contact=contact_text)}"
 
     elif intent == "rag":
-        context = "\n\n".join(
-            f"[자료{i + 1}] {d['content']}" for i, d in enumerate(state["retrieved_docs"])
-        ) or "(관련 자료 없음)"
+        context = (
+            "\n\n".join(
+                f"[자료{i + 1}] {d['content']}" for i, d in enumerate(state["retrieved_docs"])
+            )
+            or "(관련 자료 없음)"
+        )
         system_prompt = f"{RESPONSE_PROMPT}\n\n{RAG_GROUNDING.format(context=context)}"
 
     elif intent == "tool":
@@ -237,6 +304,7 @@ def build_response_inputs(state: AgentState) -> tuple[str, str]:
         system_prompt = RESPONSE_PROMPT
 
     return system_prompt, user_input
+
 
 async def response_node(state: AgentState) -> dict:
     """intent별 그라운딩을 붙여 최종 응답 생성."""

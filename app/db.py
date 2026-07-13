@@ -1,4 +1,5 @@
 """PostgreSQL + pgvector 연결 및 스키마."""
+
 import psycopg
 from pgvector.psycopg import register_vector
 
@@ -45,7 +46,9 @@ def init_schema(conn):
     conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS semester TEXT")
     conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE")
     # 필터·정렬용 인덱스
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_category ON documents (category_l1, category_l2)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_documents_category ON documents (category_l1, category_l2)"
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_active ON documents (is_active)")
     conn.execute(
         """

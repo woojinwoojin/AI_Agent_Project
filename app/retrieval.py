@@ -1,8 +1,8 @@
 """pgvector 기반 RAG 검색 + 간단 키워드 보정."""
+
 import re
 
 from app import embeddings
-
 
 SYNONYM_MAP = {
     "수강": ["수강신청", "예비수강신청", "수강정정", "수강과목포기"],
@@ -28,8 +28,19 @@ def tokenize(text: str) -> list[str]:
     tokens = re.findall(r"[가-힣a-zA-Z0-9]+", text)
 
     stopwords = {
-        "언제", "뭐야", "무엇", "어떻게", "알려줘", "궁금해",
-        "관련", "대해", "좀", "나는", "제가", "하면", "되나요",
+        "언제",
+        "뭐야",
+        "무엇",
+        "어떻게",
+        "알려줘",
+        "궁금해",
+        "관련",
+        "대해",
+        "좀",
+        "나는",
+        "제가",
+        "하면",
+        "되나요",
     }
 
     return [token for token in tokens if len(token) >= 2 and token not in stopwords]

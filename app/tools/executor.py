@@ -1,4 +1,5 @@
 """Tool 실행기. Router가 고른 도구를 실행하고 {success, data|error}를 반환."""
+
 import asyncio
 from typing import Any
 
@@ -12,7 +13,9 @@ class ToolExecutor:
     def __init__(self):
         self.academic = AcademicRepository()
 
-    async def execute(self, tool_name: str, tool_args: dict, session_id: str | None = None) -> dict[str, Any]:
+    async def execute(
+        self, tool_name: str, tool_args: dict, session_id: str | None = None
+    ) -> dict[str, Any]:
         args = tool_args or {}
         try:
             match tool_name:

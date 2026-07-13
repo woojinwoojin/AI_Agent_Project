@@ -4,22 +4,24 @@
 사용법:
     python -m app.ingest
 """
+
 import json
 import re
 
 from app import config, db, embeddings, retrieval
 
-CHUNK_TARGET = 700   # 청크 목표 길이(문자)
+CHUNK_TARGET = 700  # 청크 목표 길이(문자)
 
 # 권위 있는 '기준/요건' 문서만 priority 1(핵심), 나머지(절차·목록·일정)는 2.
 # priority 는 소수의 핵심 문서를 구분하기 위한 것이라 넓게 주지 않는다. (멘토링 결과 §8)
 _PRIORITY_BY_L2 = {
-    "foreign_language": 1, "credit_requirement": 1, "requirement": 1,
+    "foreign_language": 1,
+    "credit_requirement": 1,
+    "requirement": 1,
 }
 
 
-def doc_meta(source: str, content: str, cat_l2: str | None,
-             cat_l1: str | None = None) -> dict:
+def doc_meta(source: str, content: str, cat_l2: str | None, cat_l1: str | None = None) -> dict:
     """reranker 용 메타 계산: priority, academic_year, semester, keywords."""
     priority = _PRIORITY_BY_L2.get(cat_l2 or "", 2)
     # 학년도는 '제목'에서만 추출한다. 본문 연도(예: 2015학번, 2022.06.04)는
@@ -31,9 +33,15 @@ def doc_meta(source: str, content: str, cat_l2: str | None,
     # 키워드: 제목 토큰 + 카테고리명 (질문-문서 매칭 보조)
     kws = retrieval.tokenize(source) + [c for c in (cat_l1, cat_l2) if c]
     keywords = list(dict.fromkeys(kws))  # 중복 제거, 순서 유지
-    return {"priority": priority, "academic_year": academic_year,
-            "semester": semester, "keywords": keywords}
-CHUNK_MIN = 200      # 이보다 짧으면 다음 블록과 합침
+    return {
+        "priority": priority,
+        "academic_year": academic_year,
+        "semester": semester,
+        "keywords": keywords,
+    }
+
+
+CHUNK_MIN = 200  # 이보다 짧으면 다음 블록과 합침
 
 MANIFEST = config.PARSED_DIR / "_crawl_manifest.json"
 _CATEGORY_HEADER = re.compile(r"^>\s*카테고리:\s*([A-Za-z_]+)\s*/\s*([A-Za-z_]+)", re.M)
@@ -100,17 +108,32 @@ def ingest_documents(conn, source: str, cat_map: dict | None = None):
 
     vectors = embeddings.embed_passages(chunks)
     with conn.cursor() as cur:
-        for content, emb in zip(chunks, vectors):
+        for content, emb in zip(chunks, vectors, strict=False):
             m = doc_meta(source, content, cat_l2, cat_l1)
-            meta = {"source": source, "category_l1": cat_l1, "category_l2": cat_l2,
-                    "priority": m["priority"], "academic_year": m["academic_year"]}
+            meta = {
+                "source": source,
+                "category_l1": cat_l1,
+                "category_l2": cat_l2,
+                "priority": m["priority"],
+                "academic_year": m["academic_year"],
+            }
             cur.execute(
                 "INSERT INTO documents "
                 "(source, category_l1, category_l2, keywords, priority, "
                 " academic_year, semester, content, metadata, embedding) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (source, cat_l1, cat_l2, m["keywords"], m["priority"],
-                 m["academic_year"], m["semester"], content, json.dumps(meta), emb),
+                (
+                    source,
+                    cat_l1,
+                    cat_l2,
+                    m["keywords"],
+                    m["priority"],
+                    m["academic_year"],
+                    m["semester"],
+                    content,
+                    json.dumps(meta),
+                    emb,
+                ),
             )
     print(f"[documents] {source}: {len(chunks)}건 적재 완료 (dim={len(vectors[0])})")
 
@@ -147,8 +170,15 @@ def ingest_courses(conn):
                    (교과목명, 이수구분, 학점, 이론, 실습, 개설학년, 개설학기, 트랙, 교육과정_연도)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
-                    c["교과목명"], c["이수구분"], c["학점"], c["이론"], c["실습"],
-                    str(c["개설학년"]), str(c["개설학기"]), c["트랙"], c["교육과정_연도"],
+                    c["교과목명"],
+                    c["이수구분"],
+                    c["학점"],
+                    c["이론"],
+                    c["실습"],
+                    str(c["개설학년"]),
+                    str(c["개설학기"]),
+                    c["트랙"],
+                    c["교육과정_연도"],
                 ),
             )
     print(f"[courses] {len(catalog)}과목 적재 완료")
@@ -223,7 +253,7 @@ def synthesize_structured_docs(conn):
     print(f"[synth] 정형 문서 {len(docs)}건 임베딩...")
     vectors = embeddings.embed_passages(docs)
     with conn.cursor() as cur:
-        for content, emb in zip(docs, vectors):
+        for content, emb in zip(docs, vectors, strict=False):
             # 접두어로 카테고리 부여: [교육과정]→course/curriculum, [졸업요건]→graduation/credit_requirement
             if content.startswith("[졸업요건]"):
                 cat_l1, cat_l2 = "graduation", "credit_requirement"
@@ -233,16 +263,31 @@ def synthesize_structured_docs(conn):
             # 졸업요건(기준)은 핵심 근거 → priority 1. 교육과정 목록은 기본(2).
             if cat_l2 == "credit_requirement":
                 m["priority"] = 1
-            meta = {"source": SRC, "kind": "structured",
-                    "category_l1": cat_l1, "category_l2": cat_l2,
-                    "priority": m["priority"], "academic_year": m["academic_year"]}
+            meta = {
+                "source": SRC,
+                "kind": "structured",
+                "category_l1": cat_l1,
+                "category_l2": cat_l2,
+                "priority": m["priority"],
+                "academic_year": m["academic_year"],
+            }
             cur.execute(
                 "INSERT INTO documents "
                 "(source, category_l1, category_l2, keywords, priority, "
                 " academic_year, semester, content, metadata, embedding) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (SRC, cat_l1, cat_l2, m["keywords"], m["priority"],
-                 m["academic_year"], m["semester"], content, json.dumps(meta), emb),
+                (
+                    SRC,
+                    cat_l1,
+                    cat_l2,
+                    m["keywords"],
+                    m["priority"],
+                    m["academic_year"],
+                    m["semester"],
+                    content,
+                    json.dumps(meta),
+                    emb,
+                ),
             )
     print(f"[synth] {len(docs)}건 적재 완료")
 
