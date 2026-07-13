@@ -12,7 +12,11 @@ logger = logging.getLogger("app.retrieval")
 SYNONYM_MAP = {
     "수강": ["수강신청", "예비수강신청", "수강정정", "수강과목포기"],
     "수강신청": ["예비수강신청", "수강정정", "수강학점"],
-    "졸업": ["졸업요건", "졸업학점", "졸업인증", "외국어능력 졸업인증"],
+    # "졸업" 하나에 "외국어능력 졸업인증"까지 얹으면, 외국어 인증과 무관한 일반
+    # 졸업요건/학점 질문("23학번 졸업요건 알려줘")까지 임베딩이 외국어인증 문서
+    # 쪽으로 쏠려 정작 학과 이수학점 문서가 밀려나는 문제가 있었다. 외국어 관련
+    # 확장은 "외국어" 키에서만 하도록 분리한다.
+    "졸업": ["졸업요건", "졸업학점", "졸업인증"],
     "졸업학점": ["졸업요건", "전공필수", "전공선택", "교양필수"],
     "복학": ["복학기간", "휴학연기", "학적변동"],
     "휴학": ["미등록휴학", "등록휴학", "휴학연기", "학기중휴학"],
@@ -51,12 +55,26 @@ def tokenize(text: str) -> list[str]:
     return [token for token in tokens if len(token) >= 2 and token not in stopwords]
 
 
+# 이 챗봇은 인공지능학과(구 소프트웨어학과) 학생 전용이다. 질문에 학과명이 없으면
+# "졸업요건 알려줘"처럼 학과 무관 표현이 타 학과에도 적용되는 범용 문서(졸업 안내,
+# 외국어인증 등) 쪽으로만 임베딩이 쏠려, 정작 우리 학과 전용 구조화 문서(예: 학과별
+# 이수학점 기준)가 밀려나는 문제가 있다. 학과명이 없을 때만 암묵적으로 붙여준다.
+_DEPARTMENT_ALIASES = ("인공지능학과", "소프트웨어학과", "AI학과")
+
+
+def _mentions_department(query: str) -> bool:
+    return any(name in query for name in _DEPARTMENT_ALIASES)
+
+
 def expand_query(query: str) -> str:
     expanded_terms = []
 
     for key, values in SYNONYM_MAP.items():
         if key in query:
             expanded_terms.extend(values)
+
+    if not _mentions_department(query):
+        expanded_terms.append("인공지능학과")
 
     if not expanded_terms:
         return query
