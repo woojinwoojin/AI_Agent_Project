@@ -2213,38 +2213,68 @@ volumes:
 
 ---
 
-# 17. Python Dependencies
+### 17. Python Dependencies
 
-## `requirements.txt`
+## `pyproject.toml` · `uv sync` · `uv sync --extra dev`
 
 ### 역할
 
-- FastAPI 서버
-- PostgreSQL/pgvector
-- Upstage/OpenAI 호환 API
-- LangGraph
-- crawling/parsing 관련 패키지
+이 프로젝트는 `requirements.txt` 대신 `pyproject.toml`과 `uv.lock`을 기준으로 Python 의존성을 관리한다.
 
-```text
-# requirements.txt
-fastapi
-uvicorn[standard]
-jinja2
-python-multipart
-psycopg[binary]
-pgvector
-openai
-python-dotenv
-requests
-beautifulsoup4
+- `uv sync`: 운영 및 실행에 필요한 기본 의존성 설치
+- `uv sync --extra dev`: 테스트, lint, pre-commit 등 개발용 의존성까지 설치
 
-# LangGraph 에이전트
-langgraph
-langchain-core
-langchain-upstage
-```
+### 주요 의존성
 
----
+#### Web Framework
+
+- `fastapi`: API 서버 구현
+- `uvicorn[standard]`: ASGI 서버 실행
+- `jinja2`: HTML 템플릿 기반 UI 렌더링
+- `python-multipart`: Form/File 요청 처리 지원
+
+#### Agent Workflow
+
+- `langgraph`: Agent workflow 구성
+- `langchain-core`: LangChain 메시지 및 기본 인터페이스
+- `langchain-upstage`: Upstage Solar LLM 연동
+
+#### LLM / Embedding
+
+- `openai`: Upstage OpenAI-compatible API 호출
+- `httpx`: HTTP 요청 처리
+
+#### Database
+
+- `psycopg[binary]`: PostgreSQL 연결 드라이버
+- `pgvector`: PostgreSQL pgvector 타입 연동
+
+> PostgreSQL과 pgvector DB 자체는 Python 패키지가 아니라 Docker Compose의 DB 서비스로 실행한다.
+
+#### Configuration
+
+- `python-dotenv`: `.env` 파일 로드
+- `pydantic`: 데이터 검증
+- `pydantic-settings`: 환경변수 기반 설정 관리
+
+#### External Action Tool
+
+- `resend`: Resend API 기반 이메일 리마인드 PoC 및 확장용
+
+#### Development / CI
+
+`uv sync --extra dev` 실행 시 설치된다.
+
+- `pytest`: 테스트 실행
+- `pytest-asyncio`: 비동기 테스트 지원
+- `pytest-cov`: 테스트 커버리지 확인
+- `ruff`: lint 및 format 검사
+- `pre-commit`: 커밋 전 자동 코드 품질 검사
+
+### 실행 명령어
+
+```bash
+uv sync
 
 # 18. 현재 코드 기준 핵심 포인트
 
