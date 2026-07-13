@@ -1,5 +1,6 @@
 """/api/chat — LangGraph 에이전트 (router → rag/tool → response)."""
 
+import asyncio
 import json
 import logging
 
@@ -179,6 +180,7 @@ async def chat_stream(req: ChatRequest):
             for token in llm.chat_stream(messages):
                 answer_parts.append(token)
                 yield sse_event("delta", {"text": token})
+                await asyncio.sleep(0)
 
             yield sse_event("done", {"message": "complete"})
 
@@ -207,7 +209,7 @@ async def chat_stream(req: ChatRequest):
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
