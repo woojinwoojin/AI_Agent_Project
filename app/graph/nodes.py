@@ -235,10 +235,13 @@ def resolve_tool(text: str) -> tuple[str | None, dict | None]:
     if email_match and any(w in text for w in _REMINDER_SIGNALS):
         return "send_reminder_email", {"이메일": email_match.group(0), "내용": text}
 
-    # 1) 졸업요건 계산: '학점' + (졸업/남음을 암시하는 표현)
+    # 1) 졸업요건 계산: '학점' + (졸업/남음/이수완료를 암시하는 표현)
     # "전선 30학점 들었는데 얼마나 더 들어야돼?"처럼 '졸업'/'남'이 없이
     # 줄임말(전선·전필·교필·교선)만 쓰는 질문도 있어 트리거 표현을 넓혀둔다.
-    _REMAINING_SIGNALS = ("졸업", "남", "더", "부족", "채워야", "얼마나")
+    # "4학년 1학기까지 120학점 채웠어"처럼 완료형 서술만 있고 질문형 신호가
+    # 없는 경우("채워야"는 안 잡힘)도 있어 "채웠"/"이수했"도 추가한다 — 이게
+    # 없으면 학년+학기 숫자 때문에 아래 2)번(과목 추천)으로 잘못 빠진다.
+    _REMAINING_SIGNALS = ("졸업", "남", "더", "부족", "채워야", "얼마나", "채웠", "이수했")
     if "학점" in text and any(w in text for w in _REMAINING_SIGNALS):
         args: dict = {}
         for key, pat in [
@@ -257,8 +260,22 @@ def resolve_tool(text: str) -> tuple[str | None, dict | None]:
         if args:
             return "calc_graduation_progress", args
 
-    # 2) 과목 추천: 학년+학기
-    if 학년 and 학기:
+    # 2) 과목 추천: 학년+학기 숫자 + 추천을 원한다는 신호가 함께 있을 때만.
+    # 숫자만 보고 무조건 반환하면 "4학년 1학기까지 120학점 채웠어"처럼 학년/
+    # 학기가 다른 맥락(예: 이수학점 서술)으로 언급된 문장까지 과목 추천으로
+    # 잘못 라우팅된다.
+    _RECOMMEND_SIGNALS = (
+        "추천",
+        "들어야",
+        "뭐 들어",
+        "무슨 과목",
+        "개설",
+        "과목",
+        "수강",
+        "시간표",
+        "커리큘럼",
+    )
+    if 학년 and 학기 and any(w in text for w in _RECOMMEND_SIGNALS):
         args = {"학년": 학년, "학기": 학기}
         trk = _detect_track(text)
         if trk:
