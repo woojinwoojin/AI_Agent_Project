@@ -30,6 +30,7 @@ dependencies = [
     "langgraph>=1.0.0",
     "langchain-core>=1.0.0",
     "langchain-upstage>=0.5.0",
+    "langgraph-checkpoint-postgres>=2.0.0",
 
     # ===== Web Framework =====
     "fastapi>=0.115.0",
@@ -56,6 +57,8 @@ dependencies = [
     # ===== External Action Tool =====
     # Resend API 기반 이메일 리마인드 PoC / 확장용
     "resend>=2.0.0",
+    # 예약 리마인드 발송용 인프로세스 스케줄러
+    "apscheduler>=3.10.0",
 
     # ===== Utilities =====
     "orjson>=3.10.0",

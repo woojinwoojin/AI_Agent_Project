@@ -4,6 +4,8 @@ import asyncio
 from typing import Any
 
 from app.repositories.academic import AcademicRepository
+from app.repositories.reminders import get_reminder_repository
+from app.services.reminder_time import parse_remind_at
 
 # 계열기초(None) 제외한 학점 계산 대상
 _CATS = ["전공필수", "전공선택", "공통필수", "공통선택"]
@@ -12,6 +14,7 @@ _CATS = ["전공필수", "전공선택", "공통필수", "공통선택"]
 class ToolExecutor:
     def __init__(self):
         self.academic = AcademicRepository()
+        self.reminders = get_reminder_repository()
 
     async def execute(
         self, tool_name: str, tool_args: dict, session_id: str | None = None
@@ -23,6 +26,8 @@ class ToolExecutor:
                     return await asyncio.to_thread(self._calc_graduation, args)
                 case "recommend_courses":
                     return await asyncio.to_thread(self._recommend_courses, args)
+                case "send_reminder_email":
+                    return await asyncio.to_thread(self._send_reminder_email, args, session_id)
                 case _:
                     return {"success": False, "error": f"알 수 없는 도구: {tool_name}"}
         except Exception as e:  # noqa: BLE001
@@ -86,5 +91,28 @@ class ToolExecutor:
                 "과목수": len(courses),
                 "과목": courses,
                 "출처": "2026 인공지능학과 교육과정",
+            },
+        }
+
+    # --- send_reminder_email ---
+    # Phase 2: 즉시 발송하지 않고 reminder_requests에 예약만 등록한다.
+    # 실제 발송은 app/scheduler.py가 주기적으로 마감된 예약을 조회해 처리한다.
+    def _send_reminder_email(self, args: dict, session_id: str | None = None) -> dict:
+        이메일, 내용 = args.get("이메일"), args.get("내용")
+        if not 이메일:
+            return {"success": False, "error": "리마인드를 보낼 이메일 주소가 필요합니다."}
+
+        내용 = 내용 or "학사 일정 리마인드"
+        remind_at = parse_remind_at(내용)
+        self.reminders.create(
+            email=이메일, content=내용, remind_at=remind_at, session_id=session_id
+        )
+
+        # ADR-007: 이메일 주소는 개인정보이므로 응답 생성 LLM에 넘기는 data에는 담지 않는다.
+        return {
+            "success": True,
+            "data": {
+                "예약상태": "등록완료",
+                "발송예정시각": remind_at.strftime("%Y-%m-%d %H:%M"),
             },
         }

@@ -21,6 +21,10 @@ EMBED_DIM = int(os.getenv("EMBED_DIM", "4096"))
 # PostgreSQL + pgvector
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/gachon_ai")
 
+# Resend 이메일 리마인드 (ADR-007)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+
 # 데이터 경로
 STRUCTURED_DIR = ROOT / "output" / "structured"
 PARSED_DIR = ROOT / "output" / "parsed"

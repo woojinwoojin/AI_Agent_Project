@@ -75,6 +75,28 @@ def init_schema(conn):
         )
         """
     )
+    # 이메일 리마인드 예약 (Phase 2). remind_at까지는 scheduler가 대기 목록으로만
+    # 조회하고, 실제 발송은 scheduler가 Resend API 호출 후 status를 갱신한다.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reminder_requests (
+            id           BIGSERIAL PRIMARY KEY,
+            session_id   TEXT,
+            email        TEXT NOT NULL,
+            content      TEXT NOT NULL,
+            remind_at    TIMESTAMP NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'pending'
+                         CHECK (status IN ('pending', 'sent', 'failed')),
+            error        TEXT,
+            created_at   TIMESTAMP DEFAULT NOW(),
+            sent_at      TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reminder_requests_pending "
+        "ON reminder_requests (remind_at) WHERE status = 'pending'"
+    )
     # 주의: pgvector HNSW/IVFFlat 인덱스는 최대 2000차원까지만 지원한다.
     # Upstage 임베딩은 4096차원이고 문서 수가 적으므로, 인덱스 없이
     # 정확(exact) 코사인 검색(<=>)을 사용한다. (데이터가 커지면 halfvec 전환 고려)

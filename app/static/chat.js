@@ -7,6 +7,21 @@ const quickQuestions = document.querySelectorAll(".quick-question");
 let loadingMessage = null;
 let isSending = false;
 
+// 체크포인터가 session_id(=thread_id) 별로 대화를 기억하므로, 브라우저 탭마다
+// 고유한 값을 하나 만들어 재사용한다. 안 보내면 서버 기본값("default")을
+// 모든 사용자가 공유하게 되어 대화가 서로 섞인다.
+function getSessionId() {
+    const key = "gachon_chat_session_id";
+    let id = sessionStorage.getItem(key);
+    if (!id) {
+        id = crypto.randomUUID();
+        sessionStorage.setItem(key, id);
+    }
+    return id;
+}
+
+const sessionId = getSessionId();
+
 if (!chatForm || !messageInput || !chatBox || !sendButton) {
     console.error("필수 DOM 요소를 찾지 못했습니다.", {
         chatForm,
@@ -179,7 +194,7 @@ async function sendMessage(message) {
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({ message: trimmed }),
+            body: JSON.stringify({ message: trimmed, session_id: sessionId }),
         });
 
         if (!response.ok || !response.body) {
