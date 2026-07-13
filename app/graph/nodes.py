@@ -1,5 +1,6 @@
 """LangGraph 노드: router / rag / tool / response."""
 import json
+import logging
 import re
 from typing import Literal
 
@@ -19,6 +20,8 @@ from app.graph.state import AgentState
 from app.repositories.contacts import format_contact, match_contact
 from app.repositories.rag import get_rag_repository
 from app.tools.executor import ToolExecutor
+
+logger = logging.getLogger("app.rag")
 
 
 # "none" = 카테고리 미분류(전체 검색). Optional(null)보다 명시 값이 구조화 출력에서 안정적.
@@ -87,12 +90,42 @@ _CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
-def classify_category(text: str) -> str | None:
-    """질문을 category_l1 로 분류(키워드 규칙). 매칭 없으면 None(전체 검색)."""
-    for cat, words in _CATEGORY_KEYWORDS:
-        if any(w in text for w in words):
-            return cat
-    return None
+def classify_categories(text: str) -> list[str]:
+    """질문을 category_l1 후보로 분류(키워드 규칙).
+
+    기존에는 첫 매칭에서 즉시 return 해 "복학 기간"처럼 leave_return(복학)과
+    academic_calendar(기간)에 동시에 걸치는 질문이 leave_return 하나로만
+    좁혀져, 실제 일정 데이터가 담긴 문서가 검색 범위에서 빠지는 문제가 있었다.
+    매칭되는 카테고리를 전부 모아 반환한다(순서 = 우선순위, 첫 항목이 주 카테고리).
+    """
+    return [cat for cat, words in _CATEGORY_KEYWORDS if any(w in text for w in words)]
+
+
+# 키워드 표에 없는 표현(예: "복학 몇 월부터 가능해?")도 놓치지 않도록,
+# 시간 신호가 있으면 관련 category_l1을 추가로 후보에 넣는다(하드 필터가 아니라 확장).
+_TIME_SIGNAL_WORDS = (
+    "기간", "언제", "며칠", "날짜", "마감", "일정", "개강", "종강", "까지", "부터",
+)
+
+_RELATED_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "leave_return": ("academic_calendar",),
+    "social_service": ("academic_calendar",),
+    "graduation": ("academic_calendar",),
+    "course": ("academic_calendar",),
+}
+
+
+def expand_categories(text: str, categories: list[str]) -> list[str]:
+    """시간 신호가 있으면 제도 카테고리에 연관된 academic_calendar 등을 추가."""
+    if not categories or not any(w in text for w in _TIME_SIGNAL_WORDS):
+        return categories
+
+    expanded = list(categories)
+    for cat in categories:
+        for related in _RELATED_CATEGORIES.get(cat, ()):
+            if related not in expanded:
+                expanded.append(related)
+    return expanded
 
 
 def resolve_tool(text: str) -> tuple[str | None, dict | None]:
@@ -160,15 +193,17 @@ async def router_node(state: AgentState) -> dict:
     if intent == "chat" and _looks_informational(user_input):
         intent = "rag"
 
-    # 카테고리 분류: 키워드 규칙 주 경로 + LLM 보조(규칙 미매칭 시).
+    # 카테고리 분류: 키워드 규칙(다중 매칭 + 시간 신호 확장) 주 경로 + LLM 보조(규칙 미매칭 시).
     # ("none"/contact 는 문서가 없어 필터 안 함 → 전체 검색 후 가드레일이 문의처 안내)
-    category_l1 = None
+    rule_categories: list[str] = []
+    expanded_categories: list[str] = []
+    categories: list[str] | None = None
     if intent == "rag":
-        category_l1 = classify_category(user_input)
-        if category_l1 is None and llm_category not in ("none", "contact"):
-            category_l1 = llm_category
-        if category_l1 == "contact":
-            category_l1 = None
+        rule_categories = classify_categories(user_input)
+        expanded_categories = expand_categories(user_input, rule_categories)
+        categories = [c for c in expanded_categories if c != "contact"] or None
+        if not categories and llm_category not in ("none", "contact"):
+            categories = [llm_category]
 
     tool_name, tool_args = None, None
     if intent == "tool":
@@ -176,9 +211,20 @@ async def router_node(state: AgentState) -> dict:
         if tool_name is None:
             intent = "rag"  # 도구 판별 실패 → RAG로 폴백
 
+    logger.info(json.dumps({
+        "stage": "router",
+        "session_id": state.get("session_id"),
+        "question": user_input,
+        "intent": intent,
+        "rule_categories": rule_categories,
+        "expanded_categories": expanded_categories,
+        "llm_category": llm_category,
+        "final_categories": categories,
+    }, ensure_ascii=False))
+
     return {
         "intent": intent,
-        "category_l1": category_l1,
+        "category_l1": categories,
         "tool_name": tool_name,
         "tool_args": tool_args,
     }
@@ -189,19 +235,30 @@ async def rag_node(state: AgentState) -> dict:
     user_input = state["messages"][-1].content
     try:
         docs = await get_rag_repository().search_similar(
-            user_input, k=5, category_l1=state.get("category_l1")
+            user_input,
+            k=5,
+            category_l1=state.get("category_l1"),
+            session_id=state.get("session_id"),
         )
     except Exception:
         docs = []
 
     top_score = docs[0]["score"] if docs else 0.0
-    if not docs or top_score < config.GUARDRAIL_MIN_SCORE:
+    guardrail = not docs or top_score < config.GUARDRAIL_MIN_SCORE
+    contact = match_contact(user_input) if guardrail else None
+
+    logger.info(json.dumps({
+        "stage": "guardrail",
+        "session_id": state.get("session_id"),
+        "question": user_input,
+        "top_score": top_score,
+        "guardrail": guardrail,
+        "contact_matched": contact is not None,
+    }, ensure_ascii=False))
+
+    if guardrail:
         # 자료로 답할 수 없음 → 질문 주제에 맞는 문의처를 찾아 안내
-        return {
-            "retrieved_docs": docs,
-            "guardrail": True,
-            "contact": match_contact(user_input),
-        }
+        return {"retrieved_docs": docs, "guardrail": True, "contact": contact}
     return {"retrieved_docs": docs, "guardrail": False, "contact": None}
 
 

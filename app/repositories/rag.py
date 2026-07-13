@@ -6,12 +6,18 @@ from app import db, retrieval
 
 class RagRepository:
     async def search_similar(
-        self, query: str, k: int = 4, category_l1: str | None = None
+        self,
+        query: str,
+        k: int = 4,
+        category_l1: list[str] | str | None = None,
+        session_id: str | None = None,
     ) -> list[dict]:
         def _search():
             conn = db.connect()
             try:
-                return retrieval.search(conn, query, k=k, category_l1=category_l1)
+                return retrieval.search(
+                    conn, query, k=k, category_l1=category_l1, session_id=session_id
+                )
             finally:
                 conn.close()
 
