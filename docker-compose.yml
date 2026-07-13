@@ -1,22 +1,33 @@
-name: gachon_ai
-
 services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gachon-ai-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/gachon_ai
+    depends_on:
+      - db
+    volumes:
+      - ./output:/app/output
+    restart: unless-stopped
+
   db:
     image: pgvector/pgvector:pg16
-    container_name: gachon_ai_db
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: gachon_ai
+    container_name: gachon-ai-db
     ports:
       - "5432:5432"
+    environment:
+      POSTGRES_DB: gachon_ai
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d gachon_ai"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
 
 volumes:
-  pgdata:
+  postgres_data:
