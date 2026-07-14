@@ -266,7 +266,12 @@ def resolve_tool(text: str) -> tuple[str | None, dict | None]:
             if v is not None:
                 args[key] = v
         if not args:
-            v = _find_int(r"전공\D{0,3}(\d+)\s*학점", text) or _find_int(r"(\d+)\s*학점", text)
+            # "전공 30학점"은 이 정규식이 잡는다. blanket `(\d+)학점` 폴백은 문장에
+            # '전공'이 있을 때만 쓴다 — 없으면 "120학점 채웠어"의 120(총 이수학점)을
+            # 전공 학점으로 오인해 틀린 계산을 낸다(전공 필요=72 대비 120 → 남은 0).
+            v = _find_int(r"전공\D{0,3}(\d+)\s*학점", text)
+            if v is None and "전공" in text:
+                v = _find_int(r"(\d+)\s*학점", text)
             if v is not None:
                 args["전공"] = v
         if args:
