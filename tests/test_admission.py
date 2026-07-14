@@ -53,6 +53,7 @@ class TestIsYearSensitiveQuestion:
         assert is_year_sensitive_question("졸업 학점 얼마나 필요해?")
         assert is_year_sensitive_question("전공교육과정 이수구분 알려줘")
         assert is_year_sensitive_question("커리큘럼 어떻게 돼?")
+        assert is_year_sensitive_question("전공 트랙 뭐가 있어?")
 
     def test_year_sensitive_graduation_combos(self):
         # "졸업" + 학점/이수/요건/몇 조합도 년도-민감(졸업 이수학점 기준).

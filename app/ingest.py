@@ -236,6 +236,34 @@ def _graduation_docs() -> list[tuple[str, str]]:
     return out
 
 
+def _curriculum_docs() -> list[tuple[str, str]]:
+    """학번(입학년도)별 전공교육과정 '요약' 문서(RAG용). 과거(2021~2025)의 트랙 구성·
+    전공필수 핵심·학과명 등 학번별로 갈리는 사실을 담고, source 제목의 년도로
+    academic_year를 태깅한다. (전체 과목·학점은 해당 년도 요람이 최종 근거)"""
+    path = config.STRUCTURED_DIR / "curriculum_by_year.json"
+    if not path.exists():
+        return []
+    out: list[tuple[str, str]] = []
+    for cur in load_json(path):
+        year = cur["교육과정_연도"]
+        원문 = cur.get("학부전공_원문", "인공지능학과")
+        트랙 = cur.get("트랙", {})
+        트랙_str = " ".join(f"{name} 트랙({', '.join(courses)})." for name, courses in 트랙.items())
+        전공필수 = ", ".join(cur.get("전공필수_핵심", []))
+        비고 = cur.get("비고", "")
+        src = f"{year} 인공지능학과 전공교육과정(정형)"
+        out.append(
+            (
+                f"[교육과정] {year}학번(입학년도 {year}년) 가천대 인공지능학과"
+                f"(당시 학부/전공: {원문})의 전공 트랙은 {', '.join(트랙)}(으)로 구성된다. "
+                f"{트랙_str} 전공필수 핵심 과목은 {전공필수} 등이다."
+                + (f" {비고}" if 비고 else ""),
+                src,
+            )
+        )
+    return out
+
+
 def synthesize_structured_docs(conn):
     """정형 카탈로그/졸업요건을 '깨끗한 자연어 문서'로 합성해 RAG에 적재.
     2단 인터리빙 표에서 오는 부정확성을 제거하고 과목/학점 질의 정확도를 높인다.
@@ -290,6 +318,9 @@ def synthesize_structured_docs(conn):
 
     # E) 졸업요건 — 학번(년도)별 개별 문서 (source 제목의 년도로 academic_year 태깅)
     docs.extend(_graduation_docs())
+
+    # F) 과거 전공교육과정 요약 — 학번(년도)별 (트랙 구성·전공필수 핵심)
+    docs.extend(_curriculum_docs())
 
     print(f"[synth] 정형 문서 {len(docs)}건 임베딩...")
     contents = [c for c, _ in docs]
