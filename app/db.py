@@ -75,6 +75,24 @@ def init_schema(conn):
         )
         """
     )
+    # 리마인드 예약 테이블(런타임 운영 테이블)은 ingest 데이터와 무관하므로
+    # ensure_runtime_schema로 분리해 앱 시작(lifespan)에서도 보장한다.
+    ensure_runtime_schema(conn)
+    # 주의: pgvector HNSW/IVFFlat 인덱스는 최대 2000차원까지만 지원한다.
+    # Upstage 임베딩은 4096차원이고 문서 수가 적으므로, 인덱스 없이
+    # 정확(exact) 코사인 검색(<=>)을 사용한다. (데이터가 커지면 halfvec 전환 고려)
+
+
+def ensure_runtime_schema(conn):
+    """앱 구동에 필요한 '운영 테이블'만 생성(idempotent).
+
+    지식 테이블(documents/courses/graduation_requirements)은 ingest 데이터가
+    있어야 의미가 있어 ingest(init_schema)가 만들지만, reminder_requests는
+    ingest와 무관한 런타임 상태 저장소다. ingest를 돌리지 않았거나 스키마가
+    뒤처진 DB에 앱을 붙여도 리마인드가 조용히 실패하지 않도록, 앱 시작 시
+    (main.lifespan)에서도 이 함수를 호출해 테이블 존재를 보장한다.
+    체크포인터 테이블을 시작 시 setup()으로 만드는 것과 같은 취지다.
+    """
     # 이메일 리마인드 예약 (Phase 2). remind_at까지는 scheduler가 대기 목록으로만
     # 조회하고, 실제 발송은 scheduler가 Resend API 호출 후 status를 갱신한다.
     conn.execute(
@@ -97,6 +115,3 @@ def init_schema(conn):
         "CREATE INDEX IF NOT EXISTS idx_reminder_requests_pending "
         "ON reminder_requests (remind_at) WHERE status = 'pending'"
     )
-    # 주의: pgvector HNSW/IVFFlat 인덱스는 최대 2000차원까지만 지원한다.
-    # Upstage 임베딩은 4096차원이고 문서 수가 적으므로, 인덱스 없이
-    # 정확(exact) 코사인 검색(<=>)을 사용한다. (데이터가 커지면 halfvec 전환 고려)
