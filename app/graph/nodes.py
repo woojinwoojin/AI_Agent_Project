@@ -411,19 +411,29 @@ async def router_node(state: AgentState) -> dict:
     # 라우터 LLM 지연(~1.5s)만 제거한다. chat/rag 구분과 카테고리 fallback은 여전히
     # LLM이 담당하므로 그 경로의 동작은 동일하다.
     # (학번 되묻기 답변 턴이면 query가 '원래 질문'으로 복원돼 있어 그 질문으로 판정한다.)
+    # rag도 카테고리 키워드가 잡히면 그 자체로 학사 질문이 확정되고 검색 카테고리도
+    # 규칙이 채우므로 LLM 출력이 쓰이지 않는다(잡담은 이 키워드들을 포함하지 않아 안전).
+    # 실측상 LLM은 category를 거의 'none'으로만 반환해 기여가 얕았다 → 규칙이 카테고리를
+    # 못 찾는 '키워드 밖' 질문(예: 교환학생)과 잡담에서만 LLM을 호출한다(이 경로 동작 동일).
     tool_name, tool_args = resolve_tool(query)
     tool_forced_by_rule = tool_name is not None
     llm_called = False
     llm_intent = "skipped"
     llm_category = "none"
+    rule_categories: list[str] = []
+    expanded_categories: list[str] = []
+    categories: list[str] | None = None
 
     if tool_name is not None:
         intent = "tool"
     elif _looks_like_reminder(query):
         # (졸업계산·과목추천처럼 규칙으로 확정된 tool은 위에서 이미 잡혔으므로 여기선 순수 리마인드)
         intent = "reminder"
+    elif rule_categories := classify_categories(query):
+        # 카테고리 키워드 매칭 → 학사 질문(rag) 확정. LLM 불필요.
+        intent = "rag"
     else:
-        # 규칙으로 확정 못함 → LLM으로 chat/rag 구분 + 카테고리 보조 분류
+        # 카테고리 미매칭(키워드 밖 질문 or 잡담) → LLM으로 chat/rag 구분 + 카테고리 fallback
         llm_called = True
         structured_llm = get_llm().with_structured_output(IntentRoute)
         try:
@@ -444,13 +454,10 @@ async def router_node(state: AgentState) -> dict:
         if intent == "chat" and not _looks_like_smalltalk(query):
             intent = "rag"
 
-    # 카테고리 분류: 키워드 규칙(다중 매칭 + 시간 신호 확장) 주 경로 + LLM 보조(규칙 미매칭 시).
+    # 카테고리 최종 계산 (intent == rag일 때만). rule_categories는 위 분기에서 이미
+    # 채워졌다(키워드 매칭 경로는 값 있음, LLM 경로는 미매칭이라 빈 리스트).
     # ("none"/contact 는 문서가 없어 필터 안 함 → 전체 검색 후 가드레일이 문의처 안내)
-    rule_categories: list[str] = []
-    expanded_categories: list[str] = []
-    categories: list[str] | None = None
     if intent == "rag":
-        rule_categories = classify_categories(query)
         expanded_categories = expand_categories(query, rule_categories)
         categories = [c for c in expanded_categories if c != "contact"] or None
         if not categories and llm_category not in ("none", "contact"):
