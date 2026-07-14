@@ -70,3 +70,6 @@ data/*.csv
 
 # uv lock 파일은 포함 (재현 가능한 빌드를 위해)
 # uv.lock
+
+# 평가 생성 산출물(재생성 가능)
+eval/results/
