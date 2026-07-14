@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from datetime import datetime
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -21,6 +22,7 @@ from app.core.prompts import (
 from app.graph.state import AgentState
 from app.repositories.contacts import format_contact, match_contact
 from app.repositories.rag import get_rag_repository
+from app.services.reminder_time import parse_remind_at
 from app.tools.executor import ToolExecutor
 
 logger = logging.getLogger("app.rag")
@@ -86,6 +88,12 @@ def _looks_like_smalltalk(text: str) -> bool:
     stripped = text.strip()
     low = stripped.lower()
     return any(p in stripped or p in low for p in _SMALLTALK_PATTERNS)
+
+
+def _looks_like_reminder(text: str) -> bool:
+    """이메일 리마인드 요청 신호가 있는지(주소 유무와 무관). 주소가 없어도
+    reminder 흐름으로 보내 되묻기(awaiting_email)부터 시작하게 한다."""
+    return any(sig in text for sig in _REMINDER_SIGNALS)
 
 
 def _find_int(pattern: str, text: str) -> int | None:
@@ -227,14 +235,9 @@ def resolve_tool(text: str) -> tuple[str | None, dict | None]:
     학년 = _find_int(r"([1-4])\s*학년", text)
     학기 = _find_int(r"([1-2])\s*학기", text)
 
-    # 0) 이메일 리마인드: 이메일 주소 + 리마인드/발송 요청 신호가 함께 있을 때만.
-    # 대화 상태가 없어 별도 확인 턴을 둘 수 없으므로, 사용자가 자기 이메일 주소를
-    # 직접 적어 보낸 것 자체를 승인으로 본다. 내용 중 날짜/시간 표현은
-    # ToolExecutor가 parse_remind_at()으로 해석해 reminder_requests에 예약
-    # 등록하고, 실제 발송은 scheduler가 예약 시각에 처리한다(Phase 2).
-    email_match = re.search(_EMAIL_PATTERN, text)
-    if email_match and any(w in text for w in _REMINDER_SIGNALS):
-        return "send_reminder_email", {"이메일": email_match.group(0), "내용": text}
+    # 이메일 리마인드는 이제 별도의 멀티턴 흐름(reminder_node)이 처리한다.
+    # router가 리마인드 신호를 보면 intent=reminder로 보내 "물어보고→확인받고→
+    # 발송"을 거치므로, 여기(도구 규칙)서는 리마인드를 다루지 않는다.
 
     # 1) 졸업요건 계산: '학점' + (졸업/남음/이수완료를 암시하는 표현)
     # "전선 30학점 들었는데 얼마나 더 들어야돼?"처럼 '졸업'/'남'이 없이
@@ -303,6 +306,32 @@ async def router_node(state: AgentState) -> dict:
     """LLM으로 의도 분류 + 규칙 기반 도구 판별(resolve_tool)이 우선. 규칙이 도구
     패턴을 찾으면 LLM 판단과 무관하게 intent=tool로 승격한다."""
     user_input = state["messages"][-1].content
+
+    # 진행 중인 리마인드 확인 대화가 있으면, 이번 사용자 답을 그 대화의 응답으로
+    # 이어받는다. LLM 재분류를 건너뛰어 "응"·이메일 주소 같은 짧은 답이 rag/chat
+    # 으로 새는 것을 막는다(pending_action은 반환하지 않아 그대로 유지 → reminder_node가 갱신).
+    pending = state.get("pending_action")
+    if pending and pending.get("type") == "reminder":
+        logger.info(
+            json.dumps(
+                {
+                    "stage": "router",
+                    "session_id": state.get("session_id"),
+                    "question": user_input,
+                    "intent": "reminder",
+                    "reminder_stage": pending.get("stage"),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return {
+            "intent": "reminder",
+            "retrieved_docs": [],
+            "guardrail": False,
+            "contact": None,
+            "tool_result": None,
+        }
+
     structured_llm = get_llm().with_structured_output(IntentRoute)
     llm_category = "none"
     try:
@@ -334,6 +363,11 @@ async def router_node(state: AgentState) -> dict:
     # (근거 문서 없이 LLM이 학과 정보를 자유생성하다 지어내는 환각 방지)
     if intent == "chat" and not _looks_like_smalltalk(user_input):
         intent = "rag"
+
+    # 새 리마인드 요청: 리마인드 신호가 있으면 reminder 흐름으로 시작한다.
+    # (졸업계산·과목추천처럼 규칙으로 확정된 tool 요청은 그대로 두고 그 외에서만 승격)
+    if intent != "tool" and _looks_like_reminder(user_input):
+        intent = "reminder"
 
     # 카테고리 분류: 키워드 규칙(다중 매칭 + 시간 신호 확장) 주 경로 + LLM 보조(규칙 미매칭 시).
     # ("none"/contact 는 문서가 없어 필터 안 함 → 전체 검색 후 가드레일이 문의처 안내)
@@ -430,6 +464,182 @@ async def tool_node(state: AgentState) -> dict:
         session_id=state["session_id"],
     )
     return {"tool_result": result}
+
+
+# ── 이메일 리마인드 멀티턴 확인 흐름 ─────────────────────────────────────
+# 외부 상태를 바꾸는 이메일 발송은 "물어보고 → 확인받고 → 발송"으로만 실행한다
+# (README §6.2). 진행 단계는 pending_action(체크포인터로 턴 간 영속)에 담고,
+#   {"type":"reminder", "stage":"awaiting_email"|"awaiting_confirm",
+#    "content":str, "remind_at":ISO, "remind_label":str, "email":str|None}
+# 안내/확인 문구는 이 노드가 '결정적 템플릿'으로 직접 만든다: 이메일 주소를 응답
+# LLM에 넘기지 않아 ADR-007을 지키고(주소는 여기서만 다룸), 주소를 정확히 되비추며,
+# 턴마다 동일하게 동작한다. 그래서 response 노드를 타지 않고 바로 END로 간다.
+
+# 확인 응답(예/아니오) 규칙 분류용. 애매하면 재확인하므로 오분류 위험은 낮다.
+_CONFIRM_YES = (
+    "응",
+    "네",
+    "넵",
+    "예",
+    "그래",
+    "좋아",
+    "좋습니다",
+    "보내",
+    "부탁",
+    "ㅇㅇ",
+    "오케",
+    "ok",
+    "okay",
+    "yes",
+    "맞아",
+    "해줘",
+    "해 줘",
+    "진행",
+    "등록",
+)
+_CONFIRM_NO = (
+    "아니",
+    "아뇨",
+    "취소",
+    "됐어",
+    "됐습니다",
+    "됐네",
+    "싫",
+    "no",
+    "하지마",
+    "하지 마",
+    "지마",
+    "지 마",
+    "그만",
+    "말아",
+    "말래",
+    "말자",
+    "안 보",
+)
+
+
+def _extract_email(text: str) -> str | None:
+    m = re.search(_EMAIL_PATTERN, text)
+    return m.group(0) if m else None
+
+
+def _classify_confirm(text: str) -> Literal["yes", "no", "unclear"]:
+    low = text.strip().lower()
+    # 부정을 먼저 본다("아니 보내지마"처럼 긍정어가 섞여도 취소로 처리)
+    if any(p in low for p in _CONFIRM_NO):
+        return "no"
+    if any(p in low for p in _CONFIRM_YES):
+        return "yes"
+    return "unclear"
+
+
+def _timing_phrase(pending: dict) -> str:
+    label = pending.get("remind_label") or ""
+    return "지금 바로" if label == "지금 바로" else f"{label}에"
+
+
+def _ask_email_msg(pending: dict) -> str:
+    return (
+        f"네! 요청하신 내용을 {_timing_phrase(pending)} 리마인드 메일로 보내드릴 수 있어요. 📮\n"
+        "어느 이메일 주소로 받으실지 알려주시겠어요? (예: hong@gachon.ac.kr)"
+    )
+
+
+def _ask_confirm_msg(pending: dict) -> str:
+    return (
+        "보내기 전에 확인해주세요! 아래 내용으로 리마인드 메일을 보낼까요?\n"
+        f"- 받는 사람: {pending['email']}\n"
+        f"- 발송 시점: {pending.get('remind_label')}\n"
+        f"- 내용: {pending['content']}\n\n"
+        "'네'라고 답하시면 예약할게요. 취소하려면 '아니오'라고 답해주세요."
+    )
+
+
+def _reask_confirm_msg(pending: dict) -> str:
+    return (
+        "'네'(보내기) 또는 '아니오'(취소)로 답해주세요. "
+        f"{pending['email']}로 {_timing_phrase(pending)} 보낼 예정이에요."
+    )
+
+
+_REMINDER_REASK_EMAIL = (
+    "앗, 이메일 주소를 못 찾았어요. 예: hong@gachon.ac.kr 처럼 받으실 주소를 알려주시겠어요?"
+)
+_REMINDER_CANCELED = "알겠어요, 리마인드는 취소했어요. 필요하면 언제든 다시 말씀해 주세요! 🙂"
+_REMINDER_REGISTER_FAILED = "죄송해요, 예약 등록 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요."
+
+
+def _reminder_reply(text: str, pending: dict | None) -> dict:
+    """리마인드 노드의 반환 형태: 사용자에게 보낼 메시지 + 진행 상태(pending) 갱신."""
+    return {"messages": [AIMessage(content=text)], "pending_action": pending}
+
+
+async def _register_reminder(pending: dict, session_id: str | None) -> dict:
+    """확인 완료 → reminder_requests에 예약 등록(실제 발송은 스케줄러가 처리)."""
+    remind_at = datetime.fromisoformat(pending["remind_at"])
+    result = await tool_executor.execute(
+        tool_name="send_reminder_email",
+        tool_args={
+            "이메일": pending["email"],
+            "내용": pending["content"],
+            "발송예정시각": remind_at,
+        },
+        session_id=session_id,
+    )
+    if not result.get("success"):
+        return _reminder_reply(_REMINDER_REGISTER_FAILED, None)
+
+    if pending.get("remind_label") == "지금 바로":
+        msg = "✅ 리마인드 예약을 등록했어요! 곧 메일이 도착할 거예요."
+    else:
+        msg = f"✅ 리마인드 예약 완료! {pending.get('remind_label')}에 메일로 알려드릴게요."
+    return _reminder_reply(msg, None)
+
+
+async def reminder_node(state: AgentState) -> dict:
+    """이메일 리마인드 멀티턴 확인 흐름(물어보고 → 확인받고 → 발송)."""
+    user_input = state["messages"][-1].content
+    pending = state.get("pending_action")
+    session_id = state.get("session_id")
+
+    # ── 진행 중인 대화 이어받기 ─────────────────────────────
+    if pending and pending.get("type") == "reminder":
+        stage = pending.get("stage")
+
+        if stage == "awaiting_email":
+            email = _extract_email(user_input)
+            if not email:
+                return _reminder_reply(_REMINDER_REASK_EMAIL, pending)
+            pending = {**pending, "email": email, "stage": "awaiting_confirm"}
+            return _reminder_reply(_ask_confirm_msg(pending), pending)
+
+        if stage == "awaiting_confirm":
+            decision = _classify_confirm(user_input)
+            if decision == "no":
+                return _reminder_reply(_REMINDER_CANCELED, None)
+            if decision == "unclear":
+                return _reminder_reply(_reask_confirm_msg(pending), pending)
+            return await _register_reminder(pending, session_id)
+
+    # ── 새 리마인드 요청 시작 ───────────────────────────────
+    now = datetime.now()
+    remind_at = parse_remind_at(user_input, now=now)
+    # parse_remind_at은 날짜 표현이 없으면 now를 그대로 반환 → '즉시 발송'으로 본다.
+    immediate = abs((remind_at - now).total_seconds()) < 60
+    label = "지금 바로" if immediate else remind_at.strftime("%Y-%m-%d %H:%M")
+
+    base = {
+        "type": "reminder",
+        "content": user_input,
+        "remind_at": remind_at.isoformat(),
+        "remind_label": label,
+        "email": _extract_email(user_input),
+    }
+    if base["email"]:
+        pending = {**base, "stage": "awaiting_confirm"}
+        return _reminder_reply(_ask_confirm_msg(pending), pending)
+    pending = {**base, "stage": "awaiting_email"}
+    return _reminder_reply(_ask_email_msg(pending), pending)
 
 
 # 학사일정 안내 트리거: category_l1이 academic_calendar 이거나, 질문에 날짜/일정

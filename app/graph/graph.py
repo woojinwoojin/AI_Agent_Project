@@ -4,7 +4,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.graph.edges import route_by_intent
-from app.graph.nodes import rag_node, response_node, router_node, tool_node
+from app.graph.nodes import rag_node, reminder_node, response_node, router_node, tool_node
 from app.graph.state import AgentState
 
 _compiled = None
@@ -23,16 +23,19 @@ def create_graph():
     builder.add_node("router", router_node)
     builder.add_node("rag", rag_node)
     builder.add_node("tool", tool_node)
+    builder.add_node("reminder", reminder_node)
     builder.add_node("response", response_node)
 
     builder.add_edge(START, "router")
     builder.add_conditional_edges(
         source="router",
         path=route_by_intent,
-        path_map={"rag": "rag", "tool": "tool", "response": "response"},
+        path_map={"rag": "rag", "tool": "tool", "reminder": "reminder", "response": "response"},
     )
     builder.add_edge("rag", "response")
     builder.add_edge("tool", "response")
+    # reminder 노드는 결정적 템플릿으로 답을 직접 만들어 response(LLM)를 거치지 않는다.
+    builder.add_edge("reminder", END)
     builder.add_edge("response", END)
     return builder.compile(checkpointer=_checkpointer)
 
