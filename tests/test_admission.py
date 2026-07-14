@@ -53,12 +53,21 @@ class TestIsYearSensitiveQuestion:
         assert is_year_sensitive_question("졸업 학점 얼마나 필요해?")
         assert is_year_sensitive_question("전공교육과정 이수구분 알려줘")
         assert is_year_sensitive_question("커리큘럼 어떻게 돼?")
+        assert is_year_sensitive_question("전공 트랙 뭐가 있어?")
+
+    def test_year_sensitive_graduation_combos(self):
+        # "졸업" + 학점/이수/요건/몇 조합도 년도-민감(졸업 이수학점 기준).
+        assert is_year_sensitive_question("졸업하려면 몇 학점 필요해?")
+        assert is_year_sensitive_question("졸업하려면 학점 어떻게 돼?")
+        assert is_year_sensitive_question("졸업 조건이 뭐야?")
 
     def test_not_year_sensitive(self):
         # 개설과목 추천·수강신청 일정·연락처는 현행이 맞으니 학번 무관.
         assert not is_year_sensitive_question("2학년 1학기 뭐 들어야 해?")
         assert not is_year_sensitive_question("수강신청 언제야?")
         assert not is_year_sensitive_question("학과사무실 전화번호")
+        # 단독 '졸업 언제?'는 일정 질문 → 학번 무관.
+        assert not is_year_sensitive_question("졸업식 언제야?")
 
 
 class TestApplicableCurriculumYear:

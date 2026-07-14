@@ -456,17 +456,25 @@ async def router_node(state: AgentState) -> dict:
         if not categories and llm_category not in ("none", "contact"):
             categories = [llm_category]
 
+    # 졸업계산 도구도 학번에 따라 답이 갈린다(졸업 이수학점 기준이 학번별로 다름).
+    # 학번을 알면 도구에 넘겨 해당 학번 기준으로 계산하게 한다.
+    if intent == "tool" and tool_name == "calc_graduation_progress" and admission_year is not None:
+        tool_args = {**(tool_args or {}), "학번": admission_year}
+
     # ── 학번 되묻기 게이트 ──
-    # 졸업요건·전공교육과정처럼 학번에 따라 답이 갈리는 rag 질문인데 학번을 아직 모르면,
-    # 한 번만 되묻는다(year_prompted=True 이후로는 재질문 없이 현행 기준으로 답한다).
-    # 개설과목 추천·수강신청 일정 등 '현행이 맞는' 질문(is_year_sensitive_question=False)과
-    # tool(졸업계산 등)은 이 게이트를 타지 않는다.
-    if (
-        intent == "rag"
-        and admission_year is None
-        and not year_prompted
-        and is_year_sensitive_question(query)
-    ):
+    # 학번에 따라 답이 갈리는 질문인데 학번을 아직 모르면 한 번만 되묻는다
+    # (year_prompted=True 이후로는 재질문 없이 현행 기준으로 답한다).
+    # 대상: ①년도-민감 rag 질문(졸업요건·교육과정) ②졸업계산 중 '전공필수/전공선택/
+    # 공통' 등 학번별로 기준이 다른 세부 이수구분 계산.
+    # 제외: 개설과목 추천·수강신청 일정, 그리고 '전공(통합)' 계산 — 전공(필수+선택)은
+    # 전 학번 72로 동일하므로 학번을 물을 필요가 없다.
+    calc_needs_year = tool_name == "calc_graduation_progress" and any(
+        k in (tool_args or {}) for k in ("전공필수", "전공선택", "공통필수", "공통선택")
+    )
+    needs_admission_year = (intent == "rag" and is_year_sensitive_question(query)) or (
+        intent == "tool" and calc_needs_year
+    )
+    if needs_admission_year and admission_year is None and not year_prompted:
         logger.info(
             json.dumps(
                 {
@@ -545,9 +553,12 @@ async def rag_node(state: AgentState) -> dict:
 
     # 학번-aware: 학번을 보유 교육과정 년도로 매핑해 검색 년도 필터로 넘긴다.
     # (매핑 결과 applied_year는 응답 그라운딩에서 '어느 년도 기준'인지 밝히는 데 쓴다.)
+    # 년도 필터는 '학번에 따라 답이 갈리는 질문'(졸업요건·교육과정)에만 적용한다.
+    # 수강신청 일정·개설과목 등 현행이 맞는 질문까지 필터하면, 과거 학번 세션에서
+    # 현행(2026) 문서가 필터로 제외돼 오히려 답이 나빠진다.
     admission_year = state.get("admission_year")
     applied_year = None
-    if admission_year is not None:
+    if admission_year is not None and is_year_sensitive_question(user_input):
         try:
             years = await get_rag_repository().available_academic_years()
         except Exception:

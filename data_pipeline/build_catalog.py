@@ -196,7 +196,7 @@ def validate():
         ph = COMMON_ELECTIVE_PLACEHOLDER[(y, t)]
         if named + ph != expected:
             errs.append(
-                f"공통 {y}-{t}학기 소계 불일치: 명명 {named} + placeholder {ph} = {named+ph} ≠ 원문 {expected}"
+                f"공통 {y}-{t}학기 소계 불일치: 명명 {named} + placeholder {ph} = {named + ph} ≠ 원문 {expected}"
             )
 
     # 2) 트랙 소계

@@ -35,9 +35,18 @@ class ToolExecutor:
 
     # --- calc_graduation_progress ---
     def _calc_graduation(self, args: dict) -> dict:
-        req = self.academic.get_graduation_requirements()
-        mins = req["이수구분별_최소학점"]
-        전공_필요 = mins["전공필수"] + mins["전공선택"]
+        # 학번(입학년도)을 주면 해당 학번에 적용되는 년도의 졸업요건을 쓴다.
+        # (졸업 이수학점 기준은 학번별로 다르다: 예 21~22학번 전공필수 38, 23~26학번 35)
+        admission_year = args.get("학번")
+        req = self.academic.get_graduation_requirements(admission_year)
+        전공필수, 전공선택 = req["전공필수"], req["전공선택"]
+        전공_필요 = 전공필수 + 전공선택
+        # 세부 이수구분 최소학점: 전공필수/전공선택은 최상위, 공통필수/공통선택은 교양에서.
+        교양 = req.get("교양", {})
+        mins = {"전공필수": 전공필수, "전공선택": 전공선택}
+        for k in ("공통필수", "공통선택"):
+            if 교양.get(k) is not None:
+                mins[k] = 교양[k]
 
         이수: dict[str, int] = {}
         남은: dict[str, int] = {}
@@ -48,9 +57,9 @@ class ToolExecutor:
             이수["전공"] = done
             남은["전공"] = max(0, 전공_필요 - done)
 
-        # 세부 이수구분
+        # 세부 이수구분 (해당 년도에 존재하는 구분만)
         for k in _CATS:
-            if args.get(k) is not None:
+            if args.get(k) is not None and k in mins:
                 done = int(args[k])
                 이수[k] = done
                 남은[k] = max(0, mins[k] - done)
@@ -61,13 +70,19 @@ class ToolExecutor:
                 "error": "이수 학점 정보가 필요합니다. 예: '전공 30학점 들었어'",
             }
 
+        applied = req.get("적용_교육과정_연도", req["교육과정_연도"])
+        출처 = f"{applied} {req['학과']} 졸업요건"
+        # 요청 학번과 적용 년도가 다르면(해당 학번 자료 없어 매핑) 출처에 밝힌다.
+        if admission_year is not None and admission_year != applied:
+            출처 = f"{admission_year}학번 → {출처}(해당 학번 자료 없어 {applied}년 기준 적용)"
+
         return {
             "success": True,
             "data": {
                 "기준": {"총_졸업학점": req["총_졸업학점"], "전공_필요": 전공_필요, **mins},
                 "이수": 이수,
                 "남은": 남은,
-                "출처": f"{req['교육과정_연도']} 인공지능학과 졸업요건",
+                "출처": 출처,
             },
         }
 

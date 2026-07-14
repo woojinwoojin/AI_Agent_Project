@@ -84,13 +84,20 @@ _YEAR_SENSITIVE_KEYWORDS = (
     "교육과정",
     "커리큘럼",
     "전공교육과정",
+    "트랙",
 )
 
 
 def is_year_sensitive_question(text: str) -> bool:
     """학번에 따라 답이 달라지는 질문인지(졸업 이수학점 기준·전공교육과정표)."""
     t = text or ""
-    return any(kw in t for kw in _YEAR_SENSITIVE_KEYWORDS)
+    if any(kw in t for kw in _YEAR_SENSITIVE_KEYWORDS):
+        return True
+    # "졸업 몇 학점?", "졸업하려면 이수해야" 등 졸업 + 학점/이수/요건 조합도 년도-민감.
+    # (단독 "졸업 언제?"는 일정 질문이라 학점/이수/요건/필요/조건이 함께 있어야 True)
+    if "졸업" in t and any(w in t for w in ("학점", "이수", "요건", "필요", "조건", "몇 ")):
+        return True
+    return False
 
 
 def applicable_curriculum_year(admission_year: int, available_years) -> int | None:
