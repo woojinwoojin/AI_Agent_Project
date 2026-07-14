@@ -184,13 +184,23 @@ def ingest_courses(conn):
     print(f"[courses] {len(catalog)}과목 적재 완료")
 
 
+def _load_graduation_by_year() -> list[dict]:
+    """학번별 졸업요건 리스트. 없으면 구 단일 파일(2026)로 폴백."""
+    path = config.STRUCTURED_DIR / "graduation_by_year.json"
+    if path.exists():
+        return load_json(path)
+    return [load_json(config.STRUCTURED_DIR / "graduation_requirements.json")]
+
+
 def ingest_graduation(conn):
-    grad = load_json(config.STRUCTURED_DIR / "graduation_requirements.json")
-    conn.execute(
-        "INSERT INTO graduation_requirements (교육과정_연도, data) VALUES (%s, %s)",
-        (grad.get("교육과정_연도"), json.dumps(grad, ensure_ascii=False)),
-    )
-    print("[graduation_requirements] 1건 적재 완료")
+    grads = _load_graduation_by_year()
+    with conn.cursor() as cur:
+        for grad in grads:
+            cur.execute(
+                "INSERT INTO graduation_requirements (교육과정_연도, data) VALUES (%s, %s)",
+                (grad.get("교육과정_연도"), json.dumps(grad, ensure_ascii=False)),
+            )
+    print(f"[graduation_requirements] {len(grads)}건 적재 완료")
 
 
 def _when(c: dict) -> str:
@@ -201,22 +211,50 @@ def _when(c: dict) -> str:
     return (f"{yr}학년 " if yr else "") + str(sem)
 
 
+def _graduation_docs() -> list[tuple[str, str]]:
+    """학번(입학년도)별 졸업요건 합성 문서. (content, source) 쌍으로 반환하며,
+    source 제목에 년도를 넣어 doc_meta가 academic_year를 학번별로 태깅하게 한다.
+    → 학번-aware 검색에서 다른 학번의 졸업요건이 섞여 인용되지 않는다."""
+    out: list[tuple[str, str]] = []
+    for g in _load_graduation_by_year():
+        year = g["교육과정_연도"]
+        전필, 전선 = g["전공필수"], g["전공선택"]
+        교양 = g.get("교양", {})
+        교양_str = ", ".join(f"{k} {v}학점" for k, v in 교양.items() if v is not None)
+        src = f"{year} 인공지능학과 졸업요건(정형)"
+        비고 = g.get("비고", "")
+        out.append(
+            (
+                f"[졸업요건] {year}학번(입학년도 {year}년) 가천대 인공지능학과 졸업 이수학점은 "
+                f"총 {g['총_졸업학점']}학점이다. 전공필수 {전필}학점, 전공선택 {전선}학점"
+                + (f", {교양_str}" if 교양_str else "")
+                + f"을(를) 이수해야 한다. 전공(전공필수+전공선택)은 {전필 + 전선}학점이다."
+                + (f" 비고: {비고}" if 비고 else ""),
+                src,
+            )
+        )
+    return out
+
+
 def synthesize_structured_docs(conn):
     """정형 카탈로그/졸업요건을 '깨끗한 자연어 문서'로 합성해 RAG에 적재.
-    2단 인터리빙 표에서 오는 부정확성을 제거하고 과목/학점 질의 정확도를 높인다."""
+    2단 인터리빙 표에서 오는 부정확성을 제거하고 과목/학점 질의 정확도를 높인다.
+    문서마다 (내용, 출처) 쌍으로 관리해 졸업요건은 학번별 년도로 태깅한다."""
     from collections import defaultdict
 
     catalog = load_json(config.STRUCTURED_DIR / "course_catalog.json")
-    grad = load_json(config.STRUCTURED_DIR / "graduation_requirements.json")
-    SRC = "2026 인공지능학과 교육과정(정형)"
-    docs: list[str] = []
+    SRC_COURSE = "2026 인공지능학과 교육과정(정형)"
+    docs: list[tuple[str, str]] = []  # (content, source)
 
     # A) 과목별 사실 문서
     for c in catalog:
         docs.append(
-            f"[교육과정] '{c['교과목명']}'은(는) 가천대 인공지능학과 {c['트랙']} 트랙 "
-            f"{_when(c)} 개설 {c['이수구분']} 과목이며 {c['학점']}학점"
-            f"(이론 {c['이론']}, 실습 {c['실습']})이다."
+            (
+                f"[교육과정] '{c['교과목명']}'은(는) 가천대 인공지능학과 {c['트랙']} 트랙 "
+                f"{_when(c)} 개설 {c['이수구분']} 과목이며 {c['학점']}학점"
+                f"(이론 {c['이론']}, 실습 {c['실습']})이다.",
+                SRC_COURSE,
+            )
         )
 
     # B) 공통 트랙 (학년,학기)별 개설 과목 (이수구분 묶음)
@@ -226,45 +264,49 @@ def synthesize_structured_docs(conn):
             grp[(c["개설학년"], c["개설학기"])][c["이수구분"]].append(c["교과목명"])
     for (yr, sem), gubuns in sorted(grp.items()):
         parts = "; ".join(f"{g}: {', '.join(ns)}" for g, ns in gubuns.items())
-        docs.append(f"[교육과정] 인공지능학과 {yr}학년 {sem}학기 개설 과목 — {parts}.")
+        docs.append(
+            (f"[교육과정] 인공지능학과 {yr}학년 {sem}학기 개설 과목 — {parts}.", SRC_COURSE)
+        )
 
     # C) 트랙별 과목 목록
     for trk in ["Intelligent SW", "AIoT", "Vision & Language", "AI부트캠프"]:
         items = [f"{c['교과목명']}({_when(c)})" for c in catalog if c["트랙"] == trk]
         if items:
-            docs.append(f"[교육과정] 인공지능학과 {trk} 트랙 과목: " + ", ".join(items) + ".")
+            docs.append(
+                (f"[교육과정] 인공지능학과 {trk} 트랙 과목: " + ", ".join(items) + ".", SRC_COURSE)
+            )
 
     # D) 이수구분별 전체 목록
     for g in ["전공필수", "전공선택", "공통필수"]:
         names = [c["교과목명"] for c in catalog if c["이수구분"] == g]
         docs.append(
-            f"[교육과정] 인공지능학과 {g} 과목 전체({len(names)}과목): " + ", ".join(names) + "."
+            (
+                f"[교육과정] 인공지능학과 {g} 과목 전체({len(names)}과목): "
+                + ", ".join(names)
+                + ".",
+                SRC_COURSE,
+            )
         )
 
-    # E) 졸업요건
-    req = grad["이수구분별_최소학점"]
-    docs.append(
-        f"[졸업요건] {grad['교육과정_연도']} 가천대 인공지능학과 졸업 이수학점은 총 "
-        f"{grad['총_졸업학점']}학점이다. 전공필수 {req['전공필수']}학점, 전공선택 {req['전공선택']}학점, "
-        f"공통필수 {req['공통필수']}학점, 공통선택 {req['공통선택']}학점을 이수해야 한다. "
-        f"전공(전공필수+전공선택)은 {req['전공필수'] + req['전공선택']}학점이다."
-    )
+    # E) 졸업요건 — 학번(년도)별 개별 문서 (source 제목의 년도로 academic_year 태깅)
+    docs.extend(_graduation_docs())
 
     print(f"[synth] 정형 문서 {len(docs)}건 임베딩...")
-    vectors = embeddings.embed_passages(docs)
+    contents = [c for c, _ in docs]
+    vectors = embeddings.embed_passages(contents)
     with conn.cursor() as cur:
-        for content, emb in zip(docs, vectors, strict=False):
+        for (content, source), emb in zip(docs, vectors, strict=False):
             # 접두어로 카테고리 부여: [교육과정]→course/curriculum, [졸업요건]→graduation/credit_requirement
             if content.startswith("[졸업요건]"):
                 cat_l1, cat_l2 = "graduation", "credit_requirement"
             else:
                 cat_l1, cat_l2 = "course", "curriculum"
-            m = doc_meta(SRC, content, cat_l2, cat_l1)
+            m = doc_meta(source, content, cat_l2, cat_l1)
             # 졸업요건(기준)은 핵심 근거 → priority 1. 교육과정 목록은 기본(2).
             if cat_l2 == "credit_requirement":
                 m["priority"] = 1
             meta = {
-                "source": SRC,
+                "source": source,
                 "kind": "structured",
                 "category_l1": cat_l1,
                 "category_l2": cat_l2,
@@ -277,7 +319,7 @@ def synthesize_structured_docs(conn):
                 " academic_year, semester, content, metadata, embedding) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
-                    SRC,
+                    source,
                     cat_l1,
                     cat_l2,
                     m["keywords"],
