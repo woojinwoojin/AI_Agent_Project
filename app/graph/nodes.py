@@ -289,6 +289,22 @@ def resolve_tool(text: str) -> tuple[str | None, dict | None]:
     return None, None
 
 
+# 리마인드 pending_action(awaiting_email/awaiting_confirm) 진행 중에도, 사용자가
+# 완전히 다른 학사 질문을 하면 흐름을 끊어야 한다(그렇지 않으면 계속 이메일/확인을
+# 되묻는 문제가 생김). classify_categories/resolve_tool로 이미 잡히는 학사 키워드는
+# 여기서 중복 나열하지 않고, 그 규칙들에 안 걸리는 일반적인 질문 표현만 추가한다.
+_GENERIC_QUESTION_SIGNALS = ("알려줘", "궁금해", "뭐야", "무엇", "설명해")
+
+
+def _looks_like_new_question(text: str) -> bool:
+    """pending_action 중이어도 새 학사 질문으로 볼지 판별."""
+    if classify_categories(text):
+        return True
+    if resolve_tool(text)[0] is not None:
+        return True
+    return any(w in text for w in _GENERIC_QUESTION_SIGNALS)
+
+
 def get_llm() -> ChatUpstage:
     return ChatUpstage(
         api_key=config.UPSTAGE_API_KEY,
@@ -307,30 +323,47 @@ async def router_node(state: AgentState) -> dict:
     패턴을 찾으면 LLM 판단과 무관하게 intent=tool로 승격한다."""
     user_input = state["messages"][-1].content
 
-    # 진행 중인 리마인드 확인 대화가 있으면, 이번 사용자 답을 그 대화의 응답으로
-    # 이어받는다. LLM 재분류를 건너뛰어 "응"·이메일 주소 같은 짧은 답이 rag/chat
-    # 으로 새는 것을 막는다(pending_action은 반환하지 않아 그대로 유지 → reminder_node가 갱신).
+    # 진행 중인 리마인드 확인 대화가 있으면, 원칙적으로 이번 사용자 답을 그 대화의
+    # 응답으로 이어받는다("응"·이메일 주소 같은 짧은 답이 rag/chat으로 새는 것을 막기
+    # 위해 LLM 재분류를 건너뜀). 다만 사용자가 이메일/확인 대신 완전히 다른 학사
+    # 질문을 하면 pending을 계속 붙잡고 있으면 안 되므로(계속 이메일을 되묻는 문제),
+    # 그런 경우엔 pending을 버리고 아래 일반 라우팅으로 흘려보낸다.
     pending = state.get("pending_action")
     if pending and pending.get("type") == "reminder":
+        stage = pending.get("stage")
+        is_continuation = (
+            (
+                stage == "awaiting_email"
+                and (_extract_email(user_input) or any(w in user_input for w in _CONFIRM_NO))
+            )
+            or (stage == "awaiting_confirm" and _classify_confirm(user_input) != "unclear")
+            or not _looks_like_new_question(user_input)
+        )
+
         logger.info(
             json.dumps(
                 {
                     "stage": "router",
                     "session_id": state.get("session_id"),
                     "question": user_input,
-                    "intent": "reminder",
-                    "reminder_stage": pending.get("stage"),
+                    "intent": "reminder" if is_continuation else "reroute_new_question",
+                    "reminder_stage": stage,
                 },
                 ensure_ascii=False,
             )
         )
-        return {
-            "intent": "reminder",
-            "retrieved_docs": [],
-            "guardrail": False,
-            "contact": None,
-            "tool_result": None,
-        }
+
+        if is_continuation:
+            return {
+                "intent": "reminder",
+                "retrieved_docs": [],
+                "guardrail": False,
+                "contact": None,
+                "tool_result": None,
+            }
+
+        # 새 학사 질문으로 판단 → 리마인드 대기 상태를 버리고 아래 일반 라우팅을 계속 진행
+        pending = None
 
     structured_llm = get_llm().with_structured_output(IntentRoute)
     llm_category = "none"
@@ -411,6 +444,9 @@ async def router_node(state: AgentState) -> dict:
         "guardrail": False,
         "contact": None,
         "tool_result": None,
+        # 이 경로(early return이 아닌 일반 라우팅)에 도달했다는 건 pending_action이
+        # 애초에 없었거나, 위에서 새 질문으로 판단해 버렸다는 뜻 → 명시적으로 비운다.
+        "pending_action": pending,
     }
 
 
@@ -607,6 +643,8 @@ async def reminder_node(state: AgentState) -> dict:
         stage = pending.get("stage")
 
         if stage == "awaiting_email":
+            if any(w in user_input for w in _CONFIRM_NO):
+                return _reminder_reply(_REMINDER_CANCELED, None)
             email = _extract_email(user_input)
             if not email:
                 return _reminder_reply(_REMINDER_REASK_EMAIL, pending)
