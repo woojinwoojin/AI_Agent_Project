@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from app import config
 from app.core.prompts import (
+    ACADEMIC_CALENDAR_HINT,
     GUARDRAIL_GROUNDING,
     RAG_GROUNDING,
     RESPONSE_PROMPT,
@@ -431,14 +432,54 @@ async def tool_node(state: AgentState) -> dict:
     return {"tool_result": result}
 
 
+# 학사일정 안내 트리거: category_l1이 academic_calendar 이거나, 질문에 날짜/일정
+# 성격의 단어가 있으면 학사일정 페이지 안내 힌트를 붙인다. "예비수강신청 일자"처럼
+# 카테고리는 course로 잡혀도 실제로는 일정 질문인 경우를 놓치지 않으려 텍스트도 본다.
+_SCHEDULE_HINT_WORDS = (
+    "학사일정",
+    "일정",
+    "일자",
+    "날짜",
+    "언제",
+    "며칠",
+    "기간",
+    "마감",
+    "개강",
+    "종강",
+    "방학",
+    "시험",
+    "중간고사",
+    "기말고사",
+    "성적",
+    "수강신청",
+    "예비수강신청",
+    "수강정정",
+    "수강포기",
+    "등록금",
+    "계절학기",
+)
+
+
+def _is_schedule_related(state: AgentState) -> bool:
+    """질문이 학사일정(날짜/기간) 성격인지 판단."""
+    if "academic_calendar" in (state.get("category_l1") or []):
+        return True
+    text = state["messages"][-1].content
+    return any(w in text for w in _SCHEDULE_HINT_WORDS)
+
+
 def build_response_inputs(state: AgentState) -> tuple[str, str]:
     """최종 응답 생성을 위한 system_prompt, user_input 생성."""
     user_input = state["messages"][-1].content
     intent = state["intent"]
+    schedule_related = _is_schedule_related(state)
 
     if intent == "rag" and state.get("guardrail"):
         contact_text = format_contact(state.get("contact"))
-        system_prompt = f"{RESPONSE_PROMPT}\n\n{GUARDRAIL_GROUNDING.format(contact=contact_text)}"
+        grounding = GUARDRAIL_GROUNDING.format(contact=contact_text)
+        if schedule_related:
+            grounding = f"{ACADEMIC_CALENDAR_HINT}\n{grounding}"
+        system_prompt = f"{RESPONSE_PROMPT}\n\n{grounding}"
 
     elif intent == "rag":
         context = (
@@ -447,7 +488,10 @@ def build_response_inputs(state: AgentState) -> tuple[str, str]:
             )
             or "(관련 자료 없음)"
         )
-        system_prompt = f"{RESPONSE_PROMPT}\n\n{RAG_GROUNDING.format(context=context)}"
+        grounding = RAG_GROUNDING.format(context=context)
+        if schedule_related:
+            grounding = f"{ACADEMIC_CALENDAR_HINT}\n{grounding}"
+        system_prompt = f"{RESPONSE_PROMPT}\n\n{grounding}"
 
     elif intent == "tool":
         tool_result = json.dumps(state["tool_result"], ensure_ascii=False)
