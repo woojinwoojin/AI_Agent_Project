@@ -85,15 +85,35 @@ async def run_all(n_runs):
     graph = gm.get_graph()
     judge = get_judge()
     recs = []
+    # 레이트리밋(429) 완화용 턴 간 스로틀. 필요 시 EVAL_THROTTLE_S로 키운다.
+    throttle = float(os.getenv("EVAL_THROTTLE_S", "0.5"))
     for run_idx in range(n_runs):
         for sc in SCENARIOS:
             tid = f"__t2__{sc['id']}_{run_idx}"
             for i, turn in enumerate(sc["turns"]):
                 t0 = time.perf_counter()
-                res = await graph.ainvoke(
-                    {"messages": [HumanMessage(content=turn["q"])], "session_id": tid},
-                    config={"configurable": {"thread_id": tid}},
-                )
+                # 응답 LLM 호출(ainvoke) 실패(429 등)가 전체 실행을 죽이지 않도록 격리.
+                # 한 턴이 실패해도 기록만 남기고 계속 진행해 부분 결과를 보존한다.
+                try:
+                    res = await graph.ainvoke(
+                        {"messages": [HumanMessage(content=turn["q"])], "session_id": tid},
+                        config={"configurable": {"thread_id": tid}},
+                    )
+                except Exception as e:  # noqa: BLE001
+                    recs.append(
+                        {
+                            "run": run_idx,
+                            "scenario": sc["id"],
+                            "persona": sc["persona"],
+                            "turn": i,
+                            "q": turn["q"],
+                            "judged": False,
+                            "graph_error": str(e)[:140],
+                        }
+                    )
+                    if throttle:
+                        await asyncio.sleep(throttle)
+                    continue
                 e2e_ms = (time.perf_counter() - t0) * 1000
                 intent = res.get("intent")
                 answer = res["messages"][-1].content
@@ -144,6 +164,8 @@ async def run_all(n_runs):
                 except Exception as e:  # noqa: BLE001
                     base.update({"judged": False, "judge_error": str(e)[:120]})
                 recs.append(base)
+                if throttle:
+                    await asyncio.sleep(throttle)
         print(f"  run {run_idx + 1}/{n_runs} 완료")
     return recs
 
@@ -165,6 +187,9 @@ def summarize(recs, n_runs):
     print("\n" + "=" * 64)
     print(f"Tier2 답변품질 요약  (판정 턴 {len(judged)} / 전체 {len(recs)}, N={n_runs})")
     print("=" * 64)
+    errs = [r for r in recs if r.get("graph_error") or r.get("judge_error")]
+    if errs:
+        print(f"  ⚠ LLM 호출 실패 {len(errs)}턴 (레이트리밋 등) — 부분 결과로 집계")
 
     gr, ng = rate("grounded")
     print(
