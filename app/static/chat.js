@@ -193,6 +193,7 @@ async function sendMessage(message) {
 
     addUserMessage(trimmed);
     messageInput.value = "";
+    messageInput.style.height = "auto"; // 전송 후 한 줄 높이로 복귀
 
     const { wrap, bubble } = createStreamingBotMessage();
 
@@ -371,6 +372,26 @@ function appendTimestampOnce(wrap) {
 chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     await sendMessage(messageInput.value);
+});
+
+// textarea 자동 높이 조절: 내용에 맞춰 늘리되 CSS max-height까지만(그 이상은 스크롤).
+function autoGrowInput() {
+    messageInput.style.height = "auto";
+    messageInput.style.height = `${messageInput.scrollHeight}px`;
+}
+messageInput.addEventListener("input", autoGrowInput);
+
+// Enter=전송, Shift+Enter=줄바꿈. 한글 등 IME 조합 중 Enter(조합 확정)는
+// 전송으로 새면 안 되므로 isComposing(구형 브라우저는 keyCode 229)로 가드한다.
+messageInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey) {
+        return;
+    }
+    if (event.isComposing || event.keyCode === 229) {
+        return;
+    }
+    event.preventDefault();
+    chatForm.requestSubmit();
 });
 
 quickQuestions.forEach((button) => {
