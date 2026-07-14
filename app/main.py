@@ -40,6 +40,16 @@ BASE_DIR = Path(__file__).resolve().parent
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 리마인드 예약 테이블(운영 테이블)을 앱 시작 시 보장한다. ingest를 돌리지
+    # 않았거나 스키마가 뒤처진 DB에 붙어도 리마인드가 조용히 실패하지 않도록.
+    # (지식 테이블은 계속 ingest가 담당 — 여기서 빈 채로 만들지 않는다.)
+    try:
+        conn = db.connect()
+        db.ensure_runtime_schema(conn)
+        conn.close()
+    except Exception:
+        logging.getLogger("app").exception("운영 스키마 보장 실패(reminder_requests)")
+
     start_scheduler()  # 리마인드 예약 발송 스케줄러 (Phase 2)
 
     # LangGraph 체크포인터: session_id(=thread_id)별 대화 상태를 PostgreSQL에 저장.

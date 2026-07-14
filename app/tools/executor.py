@@ -10,6 +10,13 @@ from app.services.reminder_time import parse_remind_at
 # 계열기초(None) 제외한 학점 계산 대상
 _CATS = ["전공필수", "전공선택", "공통필수", "공통선택"]
 
+# 교양 이수구분 명칭은 년도별로 다르다: 2026~ 공통필수/공통선택, 2021~2025 융합교양/
+# 기초교양. 사용자는 보통 현행(공통필수/공통선택) 용어로 물으므로, 옛 년도 요건에서는
+# 아래 별칭으로 환산해 계산한다. (매핑 근거: 2026 졸업요건 비고 "융합교양11→공통필수11,
+# 기초교양13→공통선택13". 이 별칭이 없으면 옛 학번의 공통필수/공통선택 질문이 요건에
+# 키가 없어 조용히 버려져 '이수 학점 정보가 필요합니다' 오류로 빠졌다.)
+_COMMON_ALIASES = {"공통필수": "융합교양", "공통선택": "기초교양"}
+
 
 class ToolExecutor:
     def __init__(self):
@@ -45,8 +52,12 @@ class ToolExecutor:
         교양 = req.get("교양", {})
         mins = {"전공필수": 전공필수, "전공선택": 전공선택}
         for k in ("공통필수", "공통선택"):
-            if 교양.get(k) is not None:
-                mins[k] = 교양[k]
+            # 현행 키(공통필수/공통선택) 우선, 없으면 옛 년도 별칭(융합교양/기초교양)으로 환산.
+            v = 교양.get(k)
+            if v is None:
+                v = 교양.get(_COMMON_ALIASES[k])
+            if v is not None:
+                mins[k] = v
 
         이수: dict[str, int] = {}
         남은: dict[str, int] = {}

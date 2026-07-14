@@ -14,7 +14,11 @@ KST = timezone(timedelta(hours=9), "KST")
 
 _MONTH_DAY = re.compile(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일")
 _N_DAYS_LATER = re.compile(r"(\d+)\s*일\s*(?:후|뒤)")
-_TIME = re.compile(r"(오전|오후)?\s*(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분)?")
+# 시각 앞 시간대 표현. '오후/저녁/밤/낮'은 PM, '오전/새벽/아침'은 AM으로 본다
+# (예: "저녁 8시" → 20:00). 표현이 없으면 숫자 그대로(오전 취급).
+_TIME = re.compile(r"(오전|오후|아침|저녁|밤|새벽|낮)?\s*(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분)?")
+_PM_WORDS = {"오후", "저녁", "밤", "낮"}
+_AM_WORDS = {"오전", "새벽", "아침"}
 _RELATIVE_DAYS = {"오늘": 0, "내일": 1, "모레": 2, "글피": 3}
 
 
@@ -60,18 +64,29 @@ def parse_remind_at(text: str, now: datetime | None = None) -> datetime:
                 )
                 break
 
+    # 날짜 표현이 없어도 시각 표현이 있으면 '오늘 그 시각'을 기준으로 잡는다
+    # (아래에서 이미 지난 시각이면 내일로 넘긴다). 날짜·시각 둘 다 없으면 즉시 발송.
+    date_explicit = target_date is not None
     if target_date is None:
-        return base  # 날짜 표현 없음 -> 즉시 발송(Phase 1과 동일 동작)
+        if _TIME.search(text):
+            target_date = base.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            return base  # 날짜/시각 표현 없음 -> 즉시 발송(Phase 1과 동일 동작)
 
     tm = _TIME.search(text)
     if tm:
-        ampm, hour, minute = tm.group(1), int(tm.group(2)), int(tm.group(3) or 0)
-        if ampm == "오후" and hour < 12:
+        meridiem, hour, minute = tm.group(1), int(tm.group(2)), int(tm.group(3) or 0)
+        if meridiem in _PM_WORDS and hour < 12:
             hour += 12
-        if ampm == "오전" and hour == 12:
+        elif meridiem in _AM_WORDS and hour == 12:
             hour = 0
         target_date = target_date.replace(hour=hour, minute=minute)
     else:
         target_date = target_date.replace(hour=9, minute=0)  # 시간 미지정 시 오전 9시
+
+    # 날짜를 명시하지 않고 시각만 준 경우, 그 시각이 오늘 이미 지났으면 내일로.
+    # (날짜를 명시했으면 사용자의 날짜 의도를 존중해 넘기지 않는다.)
+    if not date_explicit and target_date <= base:
+        target_date += timedelta(days=1)
 
     return target_date
