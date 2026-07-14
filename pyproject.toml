@@ -29,8 +29,14 @@ dependencies = [
     # ===== Agent Workflow =====
     "langgraph>=1.0.0",
     "langchain-core>=1.0.0",
+    # langfuse의 langchain CallbackHandler가 버전 확인용으로 langchain 메타패키지를
+    # import 하므로(실제 심볼은 langchain_core에서 가져옴) 함께 선언한다.
+    "langchain>=1.0.0,<2",
     "langchain-upstage>=0.5.0",
     "langgraph-checkpoint-postgres>=2.0.0",
+
+    # ===== Observability =====
+    "langfuse>=4.0.0,<5",
 
     # ===== Web Framework =====
     "fastapi>=0.115.0",
