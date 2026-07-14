@@ -61,6 +61,35 @@ class ReminderRepository:
         finally:
             conn.close()
 
+    def list_recent(self, limit: int = 100) -> list[dict]:
+        """관리용 리마인드 로그 조회 (최근 생성순)."""
+        conn = db.connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT id, email, content, remind_at, status, error, created_at, sent_at
+                FROM reminder_requests
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "email": r[1],
+                    "content": r[2],
+                    "remind_at": r[3],
+                    "status": r[4],
+                    "error": r[5],
+                    "created_at": r[6],
+                    "sent_at": r[7],
+                }
+                for r in rows
+            ]
+        finally:
+            conn.close()
+
 
 _repo: ReminderRepository | None = None
 
