@@ -20,6 +20,7 @@ from app.core.admission import (
 from app.core.prompts import (
     GUARDRAIL_GROUNDING,
     RAG_GROUNDING,
+    RECOMMEND_COURSES_RULES,
     RESPONSE_PROMPT,
     ROUTER_PROMPT,
     TOOL_GROUNDING,
@@ -896,7 +897,11 @@ def build_response_inputs(state: AgentState) -> tuple[str, str]:
 
     elif intent == "tool":
         tool_result = json.dumps(state["tool_result"], ensure_ascii=False)
-        system_prompt = f"{RESPONSE_PROMPT}\n\n{TOOL_GROUNDING.format(tool_result=tool_result)}"
+        grounding = TOOL_GROUNDING.format(tool_result=tool_result)
+        # 과목 추천은 Solar가 목록을 무시하고 지어내는 환각이 잦아 전용 규칙을 덧붙인다.
+        if state.get("tool_name") == "recommend_courses":
+            grounding = f"{grounding}\n{RECOMMEND_COURSES_RULES}"
+        system_prompt = f"{RESPONSE_PROMPT}\n\n{grounding}"
 
     else:
         system_prompt = RESPONSE_PROMPT
