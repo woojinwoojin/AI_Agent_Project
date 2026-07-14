@@ -108,33 +108,43 @@ _SELECT_COLS = (
 )
 
 
-def _fetch_candidates(conn, qlit: str, candidates: int, category_l1: str | None):
+def _fetch_candidates(
+    conn,
+    qlit: str,
+    candidates: int,
+    category_l1: str | None,
+    academic_year: int | None = None,
+):
     """pgvector 유사도 상위 후보 조회. category_l1 지정 시 해당 카테고리로 필터.
+    academic_year 지정 시 '해당 년도 또는 년도무관(NULL)' 문서만 대상으로 한다
+    (학번-aware: 다른 학번 전용 문서가 섞여 인용되는 것을 막는다).
     is_active=TRUE 문서만 대상으로 한다(멘토링 결과 §9)."""
+    # SELECT의 score용 %s(qlit) → WHERE의 필터값들 → ORDER BY의 %s(qlit) → LIMIT
+    # 순서로 파라미터를 맞춰 조립한다.
+    conds = ["is_active = TRUE"]
+    filter_params: list = []
     if category_l1:
-        return conn.execute(
-            f"""
-            SELECT {_SELECT_COLS}
-            FROM documents
-            WHERE is_active = TRUE AND category_l1 = %s
-            ORDER BY embedding <=> %s::vector
-            LIMIT %s
-            """,
-            (qlit, category_l1, qlit, candidates),
-        ).fetchall()
+        conds.append("category_l1 = %s")
+        filter_params.append(category_l1)
+    if academic_year is not None:
+        conds.append("(academic_year = %s OR academic_year IS NULL)")
+        filter_params.append(academic_year)
+    where = " AND ".join(conds)
     return conn.execute(
         f"""
         SELECT {_SELECT_COLS}
         FROM documents
-        WHERE is_active = TRUE
+        WHERE {where}
         ORDER BY embedding <=> %s::vector
         LIMIT %s
         """,
-        (qlit, qlit, candidates),
+        (qlit, *filter_params, qlit, candidates),
     ).fetchall()
 
 
-def _fetch_candidates_multi(conn, qlit: str, candidates: int, categories: list[str]):
+def _fetch_candidates_multi(
+    conn, qlit: str, candidates: int, categories: list[str], academic_year: int | None = None
+):
     """카테고리별로 개별 조회 후 합친다.
 
     category_l1 IN (...) 한 번에 조회하면 벡터 유사도가 조금이라도 높은
@@ -143,7 +153,7 @@ def _fetch_candidates_multi(conn, qlit: str, candidates: int, categories: list[s
     """
     rows = []
     for cat in categories:
-        rows.extend(_fetch_candidates(conn, qlit, candidates, cat))
+        rows.extend(_fetch_candidates(conn, qlit, candidates, cat, academic_year))
     return rows
 
 
@@ -153,6 +163,7 @@ def search(
     k: int = 4,
     candidates: int = 12,
     category_l1: list[str] | str | None = None,
+    academic_year: int | None = None,
     session_id: str | None = None,
 ) -> list[dict]:
     """질의와 가장 유사한 문서 청크 반환.
@@ -179,16 +190,27 @@ def search(
     qlit = "[" + ",".join(map(str, qvec)) + "]"
 
     if requested_categories:
-        rows = _fetch_candidates_multi(conn, qlit, candidates, requested_categories)
+        rows = _fetch_candidates_multi(conn, qlit, candidates, requested_categories, academic_year)
     else:
-        rows = _fetch_candidates(conn, qlit, candidates, None)
+        rows = _fetch_candidates(conn, qlit, candidates, None, academic_year)
 
     used_categories = requested_categories
+    used_academic_year = academic_year
     fallback = False
+    if academic_year is not None and not rows:
+        # 해당 년도(+년도무관) 문서가 하나도 없음 → 년도 필터를 풀어 재검색.
+        # (아직 그 학번 데이터가 적재되기 전이면 최소한 현행 문서라도 답하게 한다.)
+        if requested_categories:
+            rows = _fetch_candidates_multi(conn, qlit, candidates, requested_categories, None)
+        else:
+            rows = _fetch_candidates(conn, qlit, candidates, None, None)
+        used_academic_year = None
+        fallback = True
     if requested_categories and not rows:
-        # 카테고리 필터로 아무것도 못 찾음 → 전체 검색으로 폴백
-        rows = _fetch_candidates(conn, qlit, candidates, None)
+        # 카테고리 필터로도 아무것도 못 찾음 → 전체 검색으로 폴백
+        rows = _fetch_candidates(conn, qlit, candidates, None, None)
         used_categories = None
+        used_academic_year = None
         fallback = True
 
     hits = [
@@ -223,6 +245,8 @@ def search(
                 "question": query,
                 "requested_categories": requested_categories,
                 "used_categories": used_categories,
+                "requested_academic_year": academic_year,
+                "used_academic_year": used_academic_year,
                 "fallback": fallback,
                 "selected": [
                     {

@@ -4,7 +4,14 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.graph.edges import route_by_intent
-from app.graph.nodes import rag_node, reminder_node, response_node, router_node, tool_node
+from app.graph.nodes import (
+    ask_admission_year_node,
+    rag_node,
+    reminder_node,
+    response_node,
+    router_node,
+    tool_node,
+)
 from app.graph.state import AgentState
 
 _compiled = None
@@ -24,18 +31,27 @@ def create_graph():
     builder.add_node("rag", rag_node)
     builder.add_node("tool", tool_node)
     builder.add_node("reminder", reminder_node)
+    builder.add_node("ask_year", ask_admission_year_node)
     builder.add_node("response", response_node)
 
     builder.add_edge(START, "router")
     builder.add_conditional_edges(
         source="router",
         path=route_by_intent,
-        path_map={"rag": "rag", "tool": "tool", "reminder": "reminder", "response": "response"},
+        path_map={
+            "rag": "rag",
+            "tool": "tool",
+            "reminder": "reminder",
+            "ask_year": "ask_year",
+            "response": "response",
+        },
     )
     builder.add_edge("rag", "response")
     builder.add_edge("tool", "response")
     # reminder 노드는 결정적 템플릿으로 답을 직접 만들어 response(LLM)를 거치지 않는다.
     builder.add_edge("reminder", END)
+    # ask_year(학번 되묻기)도 결정적 템플릿으로 질문만 던지고 END로 간다.
+    builder.add_edge("ask_year", END)
     builder.add_edge("response", END)
     return builder.compile(checkpointer=_checkpointer)
 

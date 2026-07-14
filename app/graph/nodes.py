@@ -11,6 +11,12 @@ from langchain_upstage import ChatUpstage
 from pydantic import BaseModel, Field
 
 from app import config
+from app.core.admission import (
+    applicable_curriculum_year,
+    extract_admission_year,
+    is_year_sensitive_question,
+    parse_year_reply,
+)
 from app.core.prompts import (
     GUARDRAIL_GROUNDING,
     RAG_GROUNDING,
@@ -325,12 +331,43 @@ async def router_node(state: AgentState) -> dict:
     패턴을 찾으면 LLM 판단과 무관하게 intent=tool로 승격한다."""
     user_input = state["messages"][-1].content
 
+    # 학번(입학년도) 세션 상태. admission_year/year_prompted는 체크포인터로 유지된다.
+    admission_year = state.get("admission_year")
+    year_prompted = state.get("year_prompted", False)
+    pending = state.get("pending_action")
+
+    # 이번 턴에 처리할 실제 질문. 보통 방금 입력이지만, 학번 되묻기 답변 턴에서는
+    # '원래 질문'(pending.orig_query)으로 복원해 그 질문을 학번-aware하게 답한다.
+    query = user_input
+
+    # ── 학번 되묻기(ask_year) 답변 이어받기 ──
+    if pending and pending.get("type") == "await_admission_year":
+        reply_year = parse_year_reply(user_input)
+        orig = pending.get("orig_query", user_input)
+        if reply_year is not None:
+            # 학번을 받음 → 저장하고 원 질문을 이어서 답한다.
+            admission_year = reply_year
+            query = orig
+            pending = None
+        elif _looks_like_new_question(user_input):
+            # 학번 대신 새 학사 질문을 함 → 되묻기 폐기하고 이번 입력을 정상 라우팅.
+            pending = None
+        else:
+            # "몰라" 등 학번을 못 얻음 → 다시 나그하지 않고(year_prompted=True 유지)
+            # 원 질문을 현행 기준으로 진행한다.
+            query = orig
+            pending = None
+
+    # 질문 안에 학번이 명시돼 있으면 흡수한다(예: "23학번 졸업요건").
+    spont_year = extract_admission_year(query)
+    if spont_year is not None:
+        admission_year = spont_year
+
     # 진행 중인 리마인드 확인 대화가 있으면, 원칙적으로 이번 사용자 답을 그 대화의
     # 응답으로 이어받는다("응"·이메일 주소 같은 짧은 답이 rag/chat으로 새는 것을 막기
     # 위해 LLM 재분류를 건너뜀). 다만 사용자가 이메일/확인 대신 완전히 다른 학사
     # 질문을 하면 pending을 계속 붙잡고 있으면 안 되므로(계속 이메일을 되묻는 문제),
     # 그런 경우엔 pending을 버리고 아래 일반 라우팅으로 흘려보낸다.
-    pending = state.get("pending_action")
     if pending and pending.get("type") == "reminder":
         stage = pending.get("stage")
         is_continuation = (
@@ -373,7 +410,8 @@ async def router_node(state: AgentState) -> dict:
     # 규칙을 새로 늘리는 게 아니라 기존 판정을 LLM '앞'으로 옮겨, 도구·리마인드 요청의
     # 라우터 LLM 지연(~1.5s)만 제거한다. chat/rag 구분과 카테고리 fallback은 여전히
     # LLM이 담당하므로 그 경로의 동작은 동일하다.
-    tool_name, tool_args = resolve_tool(user_input)
+    # (학번 되묻기 답변 턴이면 query가 '원래 질문'으로 복원돼 있어 그 질문으로 판정한다.)
+    tool_name, tool_args = resolve_tool(query)
     tool_forced_by_rule = tool_name is not None
     llm_called = False
     llm_intent = "skipped"
@@ -381,7 +419,7 @@ async def router_node(state: AgentState) -> dict:
 
     if tool_name is not None:
         intent = "tool"
-    elif _looks_like_reminder(user_input):
+    elif _looks_like_reminder(query):
         # (졸업계산·과목추천처럼 규칙으로 확정된 tool은 위에서 이미 잡혔으므로 여기선 순수 리마인드)
         intent = "reminder"
     else:
@@ -390,7 +428,7 @@ async def router_node(state: AgentState) -> dict:
         structured_llm = get_llm().with_structured_output(IntentRoute)
         try:
             result = await structured_llm.ainvoke(
-                [SystemMessage(content=ROUTER_PROMPT), HumanMessage(content=user_input)]
+                [SystemMessage(content=ROUTER_PROMPT), HumanMessage(content=query)]
             )
             llm_intent = result.intent
             llm_category = result.category_l1
@@ -403,7 +441,7 @@ async def router_node(state: AgentState) -> dict:
             intent = "rag"
         # 안전망: chat으로 분류됐어도 진짜 잡담(인사/감사/사용법 등)이 아니면 rag로 강제.
         # (근거 문서 없이 LLM이 학과 정보를 자유생성하다 지어내는 환각 방지)
-        if intent == "chat" and not _looks_like_smalltalk(user_input):
+        if intent == "chat" and not _looks_like_smalltalk(query):
             intent = "rag"
 
     # 카테고리 분류: 키워드 규칙(다중 매칭 + 시간 신호 확장) 주 경로 + LLM 보조(규칙 미매칭 시).
@@ -412,21 +450,61 @@ async def router_node(state: AgentState) -> dict:
     expanded_categories: list[str] = []
     categories: list[str] | None = None
     if intent == "rag":
-        rule_categories = classify_categories(user_input)
-        expanded_categories = expand_categories(user_input, rule_categories)
+        rule_categories = classify_categories(query)
+        expanded_categories = expand_categories(query, rule_categories)
         categories = [c for c in expanded_categories if c != "contact"] or None
         if not categories and llm_category not in ("none", "contact"):
             categories = [llm_category]
+
+    # ── 학번 되묻기 게이트 ──
+    # 졸업요건·전공교육과정처럼 학번에 따라 답이 갈리는 rag 질문인데 학번을 아직 모르면,
+    # 한 번만 되묻는다(year_prompted=True 이후로는 재질문 없이 현행 기준으로 답한다).
+    # 개설과목 추천·수강신청 일정 등 '현행이 맞는' 질문(is_year_sensitive_question=False)과
+    # tool(졸업계산 등)은 이 게이트를 타지 않는다.
+    if (
+        intent == "rag"
+        and admission_year is None
+        and not year_prompted
+        and is_year_sensitive_question(query)
+    ):
+        logger.info(
+            json.dumps(
+                {
+                    "stage": "router",
+                    "session_id": state.get("session_id"),
+                    "question": query,
+                    "intent": "ask_year",
+                    "reason": "year_sensitive_without_admission_year",
+                },
+                ensure_ascii=False,
+            )
+        )
+        return {
+            "intent": "ask_year",
+            "query": query,
+            "admission_year": None,
+            "year_prompted": True,
+            "applied_curriculum_year": None,
+            "category_l1": categories,
+            "tool_name": None,
+            "tool_args": None,
+            "retrieved_docs": [],
+            "guardrail": False,
+            "contact": None,
+            "tool_result": None,
+            "pending_action": {"type": "await_admission_year", "orig_query": query},
+        }
 
     logger.info(
         json.dumps(
             {
                 "stage": "router",
                 "session_id": state.get("session_id"),
-                "question": user_input,
+                "question": query,
                 "llm_called": llm_called,
                 "llm_intent": llm_intent,
                 "intent": intent,
+                "admission_year": admission_year,
                 "tool_forced_by_rule": tool_forced_by_rule,
                 "rule_categories": rule_categories,
                 "expanded_categories": expanded_categories,
@@ -439,6 +517,10 @@ async def router_node(state: AgentState) -> dict:
 
     return {
         "intent": intent,
+        "query": query,
+        "admission_year": admission_year,
+        "year_prompted": year_prompted,
+        "applied_curriculum_year": None,
         "category_l1": categories,
         "tool_name": tool_name,
         "tool_args": tool_args,
@@ -457,8 +539,20 @@ async def router_node(state: AgentState) -> dict:
 
 async def rag_node(state: AgentState) -> dict:
     """질문 관련 문서 검색. 자료가 없거나 관련도가 낮으면 가드레일로 전환."""
-    user_input = state["messages"][-1].content
+    # 학번 되묻기 답변 턴이면 query가 '원래 질문'으로 복원돼 있다.
+    user_input = state.get("query") or state["messages"][-1].content
     categories = state.get("category_l1")
+
+    # 학번-aware: 학번을 보유 교육과정 년도로 매핑해 검색 년도 필터로 넘긴다.
+    # (매핑 결과 applied_year는 응답 그라운딩에서 '어느 년도 기준'인지 밝히는 데 쓴다.)
+    admission_year = state.get("admission_year")
+    applied_year = None
+    if admission_year is not None:
+        try:
+            years = await get_rag_repository().available_academic_years()
+        except Exception:
+            years = set()
+        applied_year = applicable_curriculum_year(admission_year, years)
     # 카테고리가 여러 개 걸린 복합 질문(예: "2학기 수강신청" -> academic_calendar
     # + course)은 k=5로 좁히면 한 카테고리가 상위를 독식해 다른 카테고리 문서가
     # 아예 잘려나갈 수 있다. 여유를 더 준다.
@@ -468,6 +562,7 @@ async def rag_node(state: AgentState) -> dict:
             user_input,
             k=k,
             category_l1=categories,
+            academic_year=applied_year,
             session_id=state.get("session_id"),
         )
     except Exception:
@@ -498,6 +593,8 @@ async def rag_node(state: AgentState) -> dict:
                 "guardrail": guardrail,
                 "is_contact_question": is_contact_question,
                 "contact_matched": contact is not None,
+                "admission_year": admission_year,
+                "applied_curriculum_year": applied_year,
             },
             ensure_ascii=False,
         )
@@ -505,8 +602,18 @@ async def rag_node(state: AgentState) -> dict:
 
     if guardrail:
         # 자료로 답할 수 없음 → 질문 주제에 맞는 문의처를 찾아 안내
-        return {"retrieved_docs": docs, "guardrail": True, "contact": contact}
-    return {"retrieved_docs": docs, "guardrail": False, "contact": None}
+        return {
+            "retrieved_docs": docs,
+            "guardrail": True,
+            "contact": contact,
+            "applied_curriculum_year": applied_year,
+        }
+    return {
+        "retrieved_docs": docs,
+        "guardrail": False,
+        "contact": None,
+        "applied_curriculum_year": applied_year,
+    }
 
 
 async def tool_node(state: AgentState) -> dict:
@@ -517,6 +624,22 @@ async def tool_node(state: AgentState) -> dict:
         session_id=state["session_id"],
     )
     return {"tool_result": result}
+
+
+# ── 학번 되묻기 흐름 ────────────────────────────────────────────────────
+# 졸업요건·전공교육과정은 입학년도(학번)에 따라 갈리므로, 학번을 모르는 채 그런
+# 질문을 받으면 한 번 되묻는다. reminder 노드처럼 결정적 템플릿으로 질문만 던지고
+# END로 간다(응답 LLM을 거치지 않음). router가 pending_action(await_admission_year)을
+# 이미 세팅해 뒀고, 다음 턴 router가 사용자의 학번 답을 받아 원 질문을 이어 답한다.
+_ASK_ADMISSION_YEAR_MSG = (
+    "졸업요건과 전공교육과정은 입학년도(학번)에 따라 달라져요. "
+    "정확히 안내해 드릴 수 있게 몇 학번이신지 알려주시겠어요? (예: 23학번) 🎓"
+)
+
+
+async def ask_admission_year_node(state: AgentState) -> dict:
+    """학번을 한 번 되묻는다(결정적 템플릿)."""
+    return {"messages": [AIMessage(content=_ASK_ADMISSION_YEAR_MSG)]}
 
 
 # ── 이메일 리마인드 멀티턴 확인 흐름 ─────────────────────────────────────
@@ -697,9 +820,32 @@ async def reminder_node(state: AgentState) -> dict:
     return _reminder_reply(_ask_email_msg(pending), pending)
 
 
+def _year_note(state: AgentState) -> str:
+    """학번-aware 응답에 붙일 '어느 년도 교육과정 기준으로 답했는지' 안내(투명성).
+
+    응답 LLM이 근거의 적용 년도를 답변에 밝히도록 유도한다. 요청 학번 데이터가 없어
+    다른 년도로 매핑됐으면 그 사실(정확한 값은 학과사무실 확인 권장)까지 알려준다.
+    """
+    admission_year = state.get("admission_year")
+    applied_year = state.get("applied_curriculum_year")
+    if not admission_year or not applied_year:
+        return ""
+    if applied_year == admission_year:
+        return (
+            f"[학번 안내] 사용자는 {admission_year}학번입니다. {applied_year}학년도 교육과정/"
+            f"졸업요건 기준으로 답하고, 답변에 '{applied_year}학번 기준'임을 밝히세요."
+        )
+    return (
+        f"[학번 안내] 사용자는 {admission_year}학번이나 해당 학번 전용 자료가 아직 없어 "
+        f"{applied_year}학년도 교육과정 기준으로 안내합니다. 이 점을 답변에 밝히고, "
+        f"정확한 값은 학과사무실 확인을 권하세요."
+    )
+
+
 def build_response_inputs(state: AgentState) -> tuple[str, str]:
     """최종 응답 생성을 위한 system_prompt, user_input 생성."""
-    user_input = state["messages"][-1].content
+    # 학번 되묻기 답변 턴이면 query가 '원래 질문'으로 복원돼 있다.
+    user_input = state.get("query") or state["messages"][-1].content
     intent = state["intent"]
     # 공식 링크 안내 트리거: 라우터가 매긴 category_l1 후보 또는 질문 텍스트의
     # 키워드로 관련 공식 페이지 topic을 찾아, 자료에 답이 없을 때 링크 힌트를
@@ -723,6 +869,9 @@ def build_response_inputs(state: AgentState) -> tuple[str, str]:
             or "(관련 자료 없음)"
         )
         grounding = RAG_GROUNDING.format(context=context)
+        year_note = _year_note(state)
+        if year_note:
+            grounding = f"{year_note}\n{grounding}"
         if link_hint:
             grounding = f"{link_hint}\n{grounding}"
         system_prompt = f"{RESPONSE_PROMPT}\n\n{grounding}"
