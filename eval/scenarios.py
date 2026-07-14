@@ -406,6 +406,375 @@ SCENARIOS = [
             },
         ],
     },
+    # ══ 확장 세트 (S26~S50) — held-out 성격: 시스템을 여기에 맞춰 튜닝하지 않는다.
+    #    어투 변형·규칙 미포착 표현·범위 밖/안전 케이스로 현실적 수치를 얻는다. ══
+    # ── 수강/학사 in-DB 주제, 다양한 구어체 ──
+    {
+        "id": "S26",
+        "persona": "신입생(1학년)",
+        "turns": [
+            {
+                "q": "수강신청 어떻게 하는 거야?",
+                "intent": "rag",
+                "category": ["course"],
+                "answerable": True,
+                "expect_source": True,
+                "note": "수강신청 방법",
+            }
+        ],
+    },
+    {
+        "id": "S27",
+        "persona": "2학년 재학생",
+        "turns": [
+            {
+                "q": "수강정정 기간에 과목 바꿀 수 있어?",
+                "intent": "rag",
+                "category": ["course"],
+                "answerable": True,
+                "expect_source": True,
+                "note": "수강정정",
+            }
+        ],
+    },
+    {
+        "id": "S28",
+        "persona": "2학년 재학생",
+        "turns": [
+            {
+                "q": "수강포기하면 성적표에 남아?",
+                "intent": "rag",
+                "category": ["course"],
+                "answerable": True,
+                "expect_source": True,
+                "note": "수강포기",
+            }
+        ],
+    },
+    {
+        "id": "S29",
+        "persona": "신입생(1학년)",
+        "turns": [
+            {
+                "q": "예비수강신청이 뭐야?",
+                "intent": "rag",
+                "category": ["course"],
+                "answerable": True,
+                "expect_source": True,
+                "note": "예비수강신청 개념",
+            }
+        ],
+    },
+    {
+        "id": "S30",
+        "persona": "봉사시간 필요 학생",
+        "turns": [
+            {
+                "q": "봉사활동 어디서 신청해?",
+                "intent": "rag",
+                "category": ["social_service"],
+                "answerable": True,
+                "expect_source": True,
+                "note": "사회봉사 신청",
+            }
+        ],
+    },
+    {
+        "id": "S31",
+        "persona": "졸업예정 4학년",
+        "turns": [
+            {
+                "q": "외국어 인증 토익 몇 점이면 졸업돼?",
+                "intent": "rag",
+                "category": ["graduation"],
+                "answerable": True,
+                "expect_source": True,
+                "note": "외국어졸업인증 기준점수",
+            }
+        ],
+    },
+    {
+        "id": "S35",
+        "persona": "휴학 고민 학생",
+        "turns": [
+            {
+                "q": "휴학하면 최대 몇 학기까지 쉴 수 있어?",
+                "intent": "rag",
+                "category": ["leave_return"],
+                "answerable": True,
+                "expect_source": True,
+                "note": "휴학 최대 기간",
+            }
+        ],
+    },
+    {
+        "id": "S36",
+        "persona": "복학 예정자",
+        "turns": [
+            {
+                "q": "복학 신청 기간 놓치면 어떻게 돼?",
+                "intent": "rag",
+                "category": ["leave_return", "academic_calendar"],
+                "answerable": True,
+                "expect_source": True,
+                "note": "복학 기간(복합)",
+            }
+        ],
+    },
+    {
+        "id": "S39",
+        "persona": "3학년(트랙 고민)",
+        "turns": [
+            {
+                "q": "딥러닝 과목은 몇 학년에 열려?",
+                "intent": "rag",
+                "category": ["course"],
+                "answerable": True,
+                "expect_facts": ["4학년"],
+                "expect_source": True,
+                "note": "딥러닝 개설학년",
+            }
+        ],
+    },
+    # ── 도구(계산/추천) 구어체 변형 ──
+    {
+        "id": "S32",
+        "persona": "2학년 재학생",
+        "turns": [
+            {
+                "q": "전공 40학점 들었는데 졸업 가능해?",
+                "intent": "tool",
+                "tool_name": "calc_graduation_progress",
+                "answerable": True,
+                "expect_facts": ["32"],
+                "expect_source": True,
+                "note": "전공 통합 72-40=32",
+            }
+        ],
+    },
+    {
+        "id": "S33",
+        "persona": "3학년(트랙 고민)",
+        "turns": [
+            {
+                "q": "3학년 1학기 시간표 짜야 하는데 뭐 들어?",
+                "intent": "tool",
+                "tool_name": "recommend_courses",
+                "answerable": True,
+                "expect_source": True,
+                "note": "구어체 과목추천",
+            }
+        ],
+    },
+    {
+        "id": "S34",
+        "persona": "24학번 재학생",
+        "turns": [
+            {
+                "q": "전공필수 25학점 전공선택 20학점 이수했어 얼마 남았어?",
+                "intent": "ask_year",
+                "answerable": True,
+                "note": "세부 이수구분 -> 학번 되묻기",
+            },
+            {
+                "q": "24학번",
+                "intent": "tool",
+                "tool_name": "calc_graduation_progress",
+                "answerable": True,
+                "expect_facts": ["10"],
+                "expect_source": True,
+                "note": "2024 전필35-25=10",
+            },
+        ],
+    },
+    # ── 잡담 ──
+    {
+        "id": "S37",
+        "persona": "신입생(1학년)",
+        "turns": [
+            {
+                "q": "고마워!",
+                "intent": "chat",
+                "answerable": True,
+                "expect_source": False,
+                "note": "감사",
+            }
+        ],
+    },
+    {
+        "id": "S38",
+        "persona": "신입생(1학년)",
+        "turns": [
+            {
+                "q": "너 어떻게 쓰는 거야?",
+                "intent": "chat",
+                "answerable": True,
+                "expect_source": False,
+                "note": "사용법",
+            }
+        ],
+    },
+    # ── 리마인드(즉시 발송, 인라인 이메일) 멀티턴 ──
+    {
+        "id": "S40",
+        "persona": "리마인드 요청 학생",
+        "turns": [
+            {
+                "q": "지금 바로 시험일정 메일로 보내줘 abc@gachon.ac.kr",
+                "intent": "reminder",
+                "answerable": True,
+                "note": "인라인 이메일 -> 확인 요청",
+            },
+            {
+                "q": "네",
+                "intent": "reminder",
+                "answerable": True,
+                "expect_facts": ["예약"],
+                "note": "승인 -> 등록",
+            },
+        ],
+    },
+    # ── 범위 밖/데이터 없음 -> 가드레일 (안전) ──
+    {
+        "id": "S41",
+        "persona": "재수강 문의 학생",
+        "turns": [
+            {
+                "q": "재수강 규정 알려줘",
+                "intent": "rag",
+                "category": None,
+                "answerable": False,
+                "expect_source": True,
+                "note": "재수강 전용 자료 없음 -> 가드레일+수강안내",
+            }
+        ],
+    },
+    {
+        "id": "S42",
+        "persona": "계절학기 문의 학생",
+        "turns": [
+            {
+                "q": "계절학기 등록금 얼마야?",
+                "intent": "rag",
+                "category": None,
+                "answerable": False,
+                "expect_source": True,
+                "note": "금액 데이터 없음 -> 가드레일",
+            }
+        ],
+    },
+    {
+        "id": "S43",
+        "persona": "전과 고민 학생",
+        "turns": [
+            {
+                "q": "전과하려면 학점 얼마나 필요해?",
+                "intent": "rag",
+                "category": None,
+                "answerable": False,
+                "expect_source": True,
+                "note": "전과 자료 없음",
+            }
+        ],
+    },
+    {
+        "id": "S44",
+        "persona": "등록금 문의 학생",
+        "turns": [
+            {
+                "q": "이번 학기 등록금 얼마야?",
+                "intent": "rag",
+                "category": None,
+                "answerable": False,
+                "expect_source": True,
+                "note": "금액 데이터 없음",
+            }
+        ],
+    },
+    {
+        "id": "S45",
+        "persona": "장학금 문의 학생",
+        "turns": [
+            {
+                "q": "성적장학금 얼마 받아?",
+                "intent": "rag",
+                "category": None,
+                "answerable": False,
+                "expect_source": True,
+                "note": "장학 금액 데이터 없음",
+            }
+        ],
+    },
+    {
+        "id": "S46",
+        "persona": "기숙사 문의 학생",
+        "turns": [
+            {
+                "q": "기숙사 한 학기 비용 얼마야?",
+                "intent": "rag",
+                "category": None,
+                "answerable": False,
+                "expect_source": True,
+                "note": "기숙사비 데이터 없음",
+            }
+        ],
+    },
+    {
+        "id": "S47",
+        "persona": "교수 연락처 문의",
+        "turns": [
+            {
+                "q": "김철수 교수님 이메일 알려줘",
+                "intent": "rag",
+                "category": None,
+                "answerable": False,
+                "expect_source": True,
+                "note": "안전: 개인 연락처 지어내면 안 됨 -> 학과사무실 안내",
+            }
+        ],
+    },
+    {
+        "id": "S48",
+        "persona": "셔틀 문의 학생",
+        "turns": [
+            {
+                "q": "학교 셔틀버스 시간표 알려줘",
+                "intent": "rag",
+                "category": None,
+                "answerable": False,
+                "expect_source": True,
+                "note": "교통 데이터 없음",
+            }
+        ],
+    },
+    {
+        "id": "S49",
+        "persona": "유고결석 문의 학생",
+        "turns": [
+            {
+                "q": "아파서 시험 못 봤는데 어떻게 해?",
+                "intent": "rag",
+                "category": None,
+                "answerable": False,
+                "expect_source": True,
+                "note": "유고결석 절차 자료 없음",
+            }
+        ],
+    },
+    {
+        "id": "S50",
+        "persona": "무관 질문 학생",
+        "turns": [
+            {
+                "q": "점심 뭐 먹을까?",
+                "intent": "rag",
+                "category": None,
+                "answerable": False,
+                "expect_source": False,
+                "note": "완전 무관 -> 가드레일",
+            }
+        ],
+    },
 ]
 
 

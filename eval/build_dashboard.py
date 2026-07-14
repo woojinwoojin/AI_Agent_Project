@@ -1,10 +1,12 @@
-"""평가 대시보드 생성기 — Tier1/Tier2 원자료(JSON) → 자체완결 HTML.
+"""평가 대시보드 생성기 — Tier1/Tier2 원자료(JSON) → HTML.
 
 사용법:  python -m eval.build_dashboard
-출력:    eval/results/dashboard.html  (외부 의존 없음, 브라우저로 바로 열림)
+출력:
+  eval/results/dashboard.html           로컬 보기용 완결 문서
+  eval/results/dashboard_artifact.html  Artifact 스켈레톤용 fragment(doctype/head/body 없음)
 
 멘토 사전질문1 KPI를 발표용으로 시각화: 라우팅/검색/가드레일 정확도, 근거확보,
-답변 품질(grounded/출처/관련도), 지연, 그리고 학번-게이트 수정 before/after.
+답변 품질(grounded/출처/관련도), 지연, 학번-게이트 수정 before/after.
 """
 
 import json
@@ -14,20 +16,12 @@ from datetime import datetime, timedelta, timezone
 RESULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 
 # 학번 게이트 수정 '전' Tier1 baseline (개선 스토리용, 세션 측정값).
-BEFORE_T1 = {
-    "intent": 82.1,
-    "category": 92.3,
-    "guardrail": 93.8,
-    "retrieval": 100.0,
-    "facts": 72.7,
-}
+BEFORE_T1 = {"intent": 82.1, "category": 92.3, "guardrail": 93.8, "retrieval": 100.0, "facts": 72.7}
 
-# 팔레트: 명도 차 큰 2색(중립 slate / 강조 blue) + 상태색. 값 라벨을 항상 병기해
-# 색만으로 정보를 전달하지 않는다(CVD 안전).
-C_AFTER = "#2563eb"
-C_BEFORE = "#94a3b8"
-C_GOOD = "#16a34a"
-C_WARN = "#d97706"
+C_ACCENT = "#4f6bed"  # 인디고 — after·강조에만
+C_BEFORE = "#97a3b6"  # 중립 slate — before
+C_GOOD = "#15a34a"
+C_WARN = "#d18a1b"
 C_CRIT = "#dc2626"
 
 
@@ -56,8 +50,6 @@ def _stats(vals):
 
 
 def agg_tier1(recs):
-    runs = len({r["run"] for r in recs})
-    scen = len({r["scenario"] for r in recs})
     a = {}
     for label, key in [
         ("intent", "intent_ok"),
@@ -68,147 +60,245 @@ def agg_tier1(recs):
         ("tool", "tool_ok"),
     ]:
         a[label], _ = _rate(recs, key)
-    router = _stats([r["router_ms"] for r in recs if r.get("router_ms") is not None])
-    stage = _stats([r["stage_ms"] for r in recs if r.get("stage_ms") is not None])
     return {
-        "runs": runs,
-        "scen": scen,
+        "runs": len({r["run"] for r in recs}),
+        "scen": len({r["scenario"] for r in recs}),
         "turns": len(recs),
         "acc": a,
-        "router": router,
-        "stage": stage,
+        "router": _stats([r["router_ms"] for r in recs if r.get("router_ms") is not None]),
+        "stage": _stats([r["stage_ms"] for r in recs if r.get("stage_ms") is not None]),
     }
 
 
 def agg_tier2(recs):
     judged = [r for r in recs if r.get("judged")]
-    runs = len({r["run"] for r in recs})
-    grounded, ng = _rate(judged, "grounded")
+    grounded, _ = _rate(judged, "grounded")
     src, ns = _rate(judged, "source_cited", [r for r in judged if r.get("expect_source")])
     rels = [r["relevance"] for r in judged if r.get("relevance") is not None]
     guard = [r for r in judged if not r["answerable"]]
     gguard, _ = _rate(judged, "grounded", guard)
-    e2e = _stats([r["e2e_ms"] for r in recs if r.get("e2e_ms") is not None])
-    bad = [r for r in judged if r.get("grounded") is False or (r.get("relevance") or 5) <= 2]
+    # 환각/저관련 케이스는 시나리오별로 dedup + 빈도(N회 중 몇 번) 표기.
+    bad_raw = [r for r in judged if r.get("grounded") is False or (r.get("relevance") or 5) <= 2]
+    bad_by = {}
+    for r in bad_raw:
+        e = bad_by.setdefault(r["scenario"], {"rec": r, "n": 0})
+        e["n"] += 1
+    bad = [{**e["rec"], "count": e["n"]} for e in bad_by.values()]
     return {
-        "runs": runs,
+        "runs": len({r["run"] for r in recs}),
         "judged": len(judged),
         "grounded": grounded,
-        "ng": ng,
         "source": src,
         "ns": ns,
         "relevance": (sum(rels) / len(rels)) if rels else None,
         "guard_honesty": gguard,
         "n_guard": len(guard),
-        "e2e": e2e,
+        "e2e": _stats([r["e2e_ms"] for r in recs if r.get("e2e_ms") is not None]),
         "bad": bad,
     }
 
 
-def _tile(value, label, sub="", status="good"):
-    color = {"good": C_GOOD, "warn": C_WARN, "crit": C_CRIT}[status]
-    return f"""<div class="tile">
-      <div class="tile-val" style="color:{color}">{value}</div>
+def _status(pct, hi, mid):
+    if pct is None:
+        return "warn"
+    return "good" if pct >= hi else ("warn" if pct >= mid else "crit")
+
+
+_CHIP = {"good": "우수", "warn": "양호", "crit": "주의"}
+
+
+def _tile(value, label, sub, status):
+    return f"""<div class="tile tile--{status}">
+      <div class="tile-top"><span class="chip chip--{status}">{_CHIP[status]}</span></div>
+      <div class="tile-val">{value}</div>
       <div class="tile-label">{label}</div>
       <div class="tile-sub">{sub}</div>
     </div>"""
 
 
-def _bar(label, pct, color, note=""):
-    w = 0 if pct is None else max(2, pct)
-    val = "n/a" if pct is None else f"{pct:.1f}%"
-    return f"""<div class="bar-row">
-      <div class="bar-label">{label}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:{w}%;background:{color}"></div></div>
-      <div class="bar-val">{val}{note}</div>
-    </div>"""
-
-
 def _ba_bar(label, before, after):
-    """before/after 페어 바."""
-
-    def seg(pct, color, tag):
-        w = 0 if pct is None else max(2, pct)
+    def seg(pct, cls, color, tag):
+        w = 0 if pct is None else max(1.5, pct)
         v = "n/a" if pct is None else f"{pct:.1f}%"
         return (
-            f'<div class="ba-seg"><span class="ba-tag">{tag}</span>'
-            f'<div class="bar-track"><div class="bar-fill" style="width:{w}%;background:{color}"></div></div>'
-            f'<span class="bar-val">{v}</span></div>'
+            f'<div class="seg"><span class="seg-tag {cls}">{tag}</span>'
+            f'<div class="track"><div class="fill" style="width:{w}%;background:{color}"></div></div>'
+            f'<span class="val">{v}</span></div>'
         )
 
     delta = ""
-    if before is not None and after is not None:
+    if before is not None and after is not None and abs(after - before) >= 0.05:
         d = after - before
-        if abs(d) >= 0.05:
-            delta = (
-                f'<span class="delta">▲ +{d:.1f}p</span>'
-                if d > 0
-                else f'<span class="delta down">▼ {d:.1f}p</span>'
-            )
-    return f"""<div class="ba-row">
-      <div class="bar-label">{label} {delta}</div>
-      {seg(before, C_BEFORE, "전")}
-      {seg(after, C_AFTER, "후")}
-    </div>"""
+        delta = (
+            f'<span class="delta up">+{d:.1f}p</span>'
+            if d > 0
+            else f'<span class="delta down">{d:.1f}p</span>'
+        )
+    return (
+        f'<div class="ba"><div class="ba-label">{label}{delta}</div>'
+        f'{seg(before, "b", C_BEFORE, "전")}{seg(after, "a", C_ACCENT, "후")}</div>'
+    )
 
 
-def _lat_bars(title, stats, unit="ms"):
+def _lat(title, stats):
     if not stats:
         return ""
     mx = max(stats["avg"], stats["p50"], stats["p95"]) or 1
     rows = ""
-    for k, c in [("p50", C_GOOD), ("avg", C_AFTER), ("p95", C_WARN)]:
-        w = max(2, stats[k] / mx * 100)
+    for k, color in [("p50", C_GOOD), ("avg", C_ACCENT), ("p95", C_WARN)]:
+        w = max(1.5, stats[k] / mx * 100)
         rows += (
-            f'<div class="bar-row"><div class="bar-label lat">{k}</div>'
-            f'<div class="bar-track"><div class="bar-fill" style="width:{w}%;background:{c}"></div></div>'
-            f'<div class="bar-val">{stats[k]:.0f}{unit}</div></div>'
+            f'<div class="row"><span class="row-k">{k}</span>'
+            f'<div class="track"><div class="fill" style="width:{w}%;background:{color}"></div></div>'
+            f'<span class="val">{stats[k]:.0f}<span class="unit">ms</span></span></div>'
         )
-    return f'<div class="lat-block"><div class="lat-title">{title}</div>{rows}</div>'
+    return f'<div class="lat"><div class="lat-h">{title}</div>{rows}</div>'
 
 
-def build_html(t1, t2):
+def _section(eyebrow, title, body):
+    return f'<section><p class="eyebrow">{eyebrow}</p><h2>{title}</h2>{body}</section>'
+
+
+CSS = f"""
+:root {{
+  --bg:#f5f6f9; --surface:#ffffff; --surface2:#fafbfc; --ink:#111827; --ink2:#51607a;
+  --muted:#94a1b8; --border:#e4e8ef; --track:#eceff4; --accent:{C_ACCENT};
+  --good:{C_GOOD}; --warn:{C_WARN}; --crit:{C_CRIT}; --before:{C_BEFORE};
+}}
+@media (prefers-color-scheme: dark) {{
+  :root {{ --bg:#0a0f1c; --surface:#121a2b; --surface2:#0f1626; --ink:#e8ecf5; --ink2:#9aa7c0;
+    --muted:#66748f; --border:#1f2a40; --track:#1a2438; }}
+}}
+:root[data-theme="dark"] {{ --bg:#0a0f1c; --surface:#121a2b; --surface2:#0f1626; --ink:#e8ecf5;
+  --ink2:#9aa7c0; --muted:#66748f; --border:#1f2a40; --track:#1a2438; }}
+:root[data-theme="light"] {{ --bg:#f5f6f9; --surface:#ffffff; --surface2:#fafbfc; --ink:#111827;
+  --ink2:#51607a; --muted:#94a1b8; --border:#e4e8ef; --track:#eceff4; }}
+* {{ box-sizing:border-box; }}
+body {{ margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",-apple-system,BlinkMacSystemFont,
+    "Segoe UI",Roboto,sans-serif;
+  font-feature-settings:"tnum" 1; -webkit-font-smoothing:antialiased; line-height:1.55; }}
+.wrap {{ max-width:1000px; margin:0 auto; padding:40px 22px 72px; }}
+.masthead {{ border-bottom:1px solid var(--border); padding-bottom:20px; margin-bottom:8px; }}
+.masthead h1 {{ font-size:25px; font-weight:750; letter-spacing:-.6px; margin:0 0 6px;
+  text-wrap:balance; }}
+.masthead .meta {{ color:var(--ink2); font-size:13px; margin:0; font-variant-numeric:tabular-nums; }}
+section {{ margin-top:38px; }}
+.eyebrow {{ text-transform:uppercase; letter-spacing:.14em; font-size:11px; font-weight:700;
+  color:var(--accent); margin:0 0 3px; }}
+h2 {{ font-size:17px; font-weight:700; letter-spacing:-.3px; margin:0 0 16px; color:var(--ink); }}
+.grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(158px,1fr)); gap:12px; }}
+.tile {{ position:relative; background:var(--surface); border:1px solid var(--border);
+  border-radius:14px; padding:15px 16px 16px; overflow:hidden; }}
+.tile::before {{ content:""; position:absolute; left:0; top:0; bottom:0; width:3px; }}
+.tile--good::before {{ background:var(--good); }} .tile--warn::before {{ background:var(--warn); }}
+.tile--crit::before {{ background:var(--crit); }}
+.tile-top {{ margin-bottom:8px; }}
+.chip {{ font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:999px;
+  letter-spacing:.02em; }}
+.chip--good {{ color:var(--good); background:color-mix(in srgb,var(--good) 14%,transparent); }}
+.chip--warn {{ color:var(--warn); background:color-mix(in srgb,var(--warn) 15%,transparent); }}
+.chip--crit {{ color:var(--crit); background:color-mix(in srgb,var(--crit) 15%,transparent); }}
+.tile-val {{ font-size:28px; font-weight:760; letter-spacing:-1px; line-height:1.1;
+  font-variant-numeric:tabular-nums; }}
+.tile-label {{ font-size:13px; font-weight:650; margin-top:3px; }}
+.tile-sub {{ font-size:11.5px; color:var(--muted); margin-top:2px; }}
+.card {{ background:var(--surface); border:1px solid var(--border); border-radius:14px;
+  padding:20px 22px; }}
+.track {{ flex:1; height:12px; background:var(--track); border-radius:6px; overflow:hidden; }}
+.fill {{ height:100%; border-radius:6px; }}
+.val {{ width:66px; text-align:right; font-size:13px; font-variant-numeric:tabular-nums;
+  color:var(--ink2); flex-shrink:0; }}
+.val .unit {{ color:var(--muted); font-size:11px; }}
+.ba {{ padding:11px 0; border-bottom:1px solid var(--border); }}
+.ba:last-child {{ border-bottom:0; }}
+.ba-label {{ font-size:13px; font-weight:600; margin-bottom:5px; display:flex;
+  align-items:center; gap:8px; }}
+.seg {{ display:flex; align-items:center; gap:10px; margin:4px 0; }}
+.seg-tag {{ width:18px; font-size:11px; flex-shrink:0; }}
+.seg-tag.b {{ color:var(--muted); }} .seg-tag.a {{ color:var(--accent); font-weight:700; }}
+.delta {{ font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; }}
+.delta.up {{ color:var(--good); }} .delta.down {{ color:var(--crit); }}
+.lat {{ margin-bottom:16px; }} .lat:last-child {{ margin-bottom:0; }}
+.lat-h {{ font-size:13px; font-weight:650; margin-bottom:6px; }}
+.row {{ display:flex; align-items:center; gap:10px; margin:5px 0; }}
+.row-k {{ width:38px; font-size:12px; color:var(--ink2); flex-shrink:0;
+  font-variant-numeric:tabular-nums; }}
+.legend {{ font-size:12px; color:var(--muted); margin-top:12px; display:flex; gap:14px;
+  flex-wrap:wrap; }}
+.legend span {{ display:inline-flex; align-items:center; gap:5px; }}
+.dot {{ width:9px; height:9px; border-radius:3px; }}
+.tblwrap {{ overflow-x:auto; }}
+table {{ width:100%; border-collapse:collapse; font-size:12.5px; }}
+th, td {{ text-align:left; padding:8px 10px; border-bottom:1px solid var(--border);
+  vertical-align:top; }}
+th {{ color:var(--ink2); font-weight:650; white-space:nowrap; }}
+.method p {{ font-size:13px; color:var(--ink2); margin:0 0 10px; }}
+.method p:last-child {{ margin-bottom:0; }} .method b {{ color:var(--ink); font-weight:650; }}
+.note {{ color:var(--muted); font-size:12px; margin-top:10px; }}
+"""
+
+
+def build_body(t1, t2):
     kst = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M KST")
     a = t1["acc"]
-
-    def st(pct, hi=95, mid=85):
-        if pct is None:
-            return "warn"
-        return "good" if pct >= hi else ("warn" if pct >= mid else "crit")
-
     tiles = "".join(
         [
-            _tile(f"{a['intent']:.1f}%", "intent 라우팅", f"n={t1['turns']}", st(a["intent"])),
-            _tile(f"{a['category']:.0f}%", "category 분류", "규칙 기반", st(a["category"])),
-            _tile(f"{a['guardrail']:.1f}%", "가드레일 정확도", "범위밖 판별", st(a["guardrail"])),
-            _tile(f"{a['retrieval']:.0f}%", "검색 성공률", "answerable RAG", st(a["retrieval"])),
-            _tile(f"{a['facts']:.0f}%", "근거 확보율", "expect_facts", st(a["facts"])),
+            _tile(
+                f"{a['intent']:.1f}%",
+                "intent 라우팅 정확도",
+                f"{t1['turns']}턴",
+                _status(a["intent"], 95, 85),
+            ),
+            _tile(
+                f"{a['category']:.0f}%",
+                "category 분류",
+                "규칙 기반",
+                _status(a["category"], 95, 85),
+            ),
+            _tile(
+                f"{a['guardrail']:.0f}%",
+                "가드레일 정확도",
+                "범위밖 판별",
+                _status(a["guardrail"], 95, 85),
+            ),
+            _tile(
+                f"{a['retrieval']:.0f}%",
+                "검색 성공률",
+                "answerable RAG",
+                _status(a["retrieval"], 95, 85),
+            ),
+            _tile(f"{a['facts']:.0f}%", "근거 확보율", "expect_facts", _status(a["facts"], 95, 85)),
         ]
     )
-    q_tiles = ""
+    qtiles = '<p class="note">Tier2 데이터 없음</p>'
     if t2:
-        q_tiles = "".join(
+        rel_pct = t2["relevance"] / 5 * 100
+        qtiles = "".join(
             [
                 _tile(
-                    f"{t2['grounded']:.1f}%",
-                    "grounded(환각 반대)",
-                    f"환각율 {100 - t2['grounded']:.1f}%",
-                    st(t2["grounded"], 90, 80),
+                    f"{t2['grounded']:.0f}%",
+                    "grounded (환각 반대)",
+                    f"환각율 {100 - t2['grounded']:.0f}%",
+                    _status(t2["grounded"], 90, 80),
                 ),
                 _tile(
-                    f"{t2['source']:.1f}%", "출처 인용률", f"n={t2['ns']}", st(t2["source"], 90, 80)
+                    f"{t2['source']:.0f}%",
+                    "출처 인용률",
+                    f"n={t2['ns']}",
+                    _status(t2["source"], 90, 80),
                 ),
                 _tile(
-                    f"{t2['relevance']:.2f}/5",
-                    "평균 관련도",
-                    f"{t2['relevance'] / 5 * 100:.0f}%",
-                    st(t2["relevance"] / 5 * 100, 90, 75),
+                    f"{t2['relevance']:.2f}",
+                    "평균 관련도 (5점)",
+                    f"{rel_pct:.0f}%",
+                    _status(rel_pct, 90, 75),
                 ),
                 _tile(
                     f"{t2['guard_honesty']:.0f}%",
                     "가드레일 정직도",
                     f"n={t2['n_guard']}",
-                    st(t2["guard_honesty"], 90, 75),
+                    _status(t2["guard_honesty"], 90, 75),
                 ),
             ]
         )
@@ -221,138 +311,96 @@ def build_html(t1, t2):
             _ba_bar("근거 확보율", BEFORE_T1["facts"], a["facts"]),
         ]
     )
+    ba_legend = (
+        f'<div class="legend"><span><span class="dot" style="background:{C_BEFORE}"></span>'
+        f'수정 전</span><span><span class="dot" style="background:{C_ACCENT}"></span>'
+        f"수정 후</span></div>"
+    )
 
-    lat = _lat_bars("Router (규칙 확정 시 LLM 생략 → p50 0ms)", t1["router"])
-    lat += _lat_bars("검색/도구 (RAG retrieval+rerank)", t1["stage"])
+    lat = _lat("Router — 규칙 확정 시 LLM 생략 → p50 0ms", t1["router"])
+    lat += _lat("검색·도구 — RAG retrieval + rerank", t1["stage"])
     if t2 and t2["e2e"]:
-        lat += _lat_bars("전체 응답 e2e (응답 LLM 포함)", t2["e2e"])
+        lat += _lat("전체 응답 e2e — 응답 LLM 포함", t2["e2e"])
+    lat_legend = (
+        f'<div class="legend"><span><span class="dot" style="background:{C_GOOD}"></span>'
+        f'p50</span><span><span class="dot" style="background:{C_ACCENT}"></span>avg</span>'
+        f'<span><span class="dot" style="background:{C_WARN}"></span>p95</span></div>'
+    )
 
-    bad_rows = ""
+    flagged = '<p class="note">환각·저관련 플래그 없음</p>'
     if t2 and t2["bad"]:
-        for r in t2["bad"]:
-            bad_rows += (
-                f"<tr><td>{r['scenario']}</td><td>{r['q']}</td>"
-                f"<td>{'환각' if r.get('grounded') is False else ''} "
-                f"rel={r.get('relevance')}</td><td>{r.get('judge_reason', '')}</td></tr>"
-            )
-        bad_rows = f"""<table class="tbl"><thead><tr><th>시나리오</th><th>질문</th>
-          <th>플래그</th><th>심판 사유</th></tr></thead><tbody>{bad_rows}</tbody></table>
-          <p class="muted">※ LLM 심판은 보수적으로 채점 — 위 케이스 상당수는 실제로는 정상
-          (긴 목록 누락 오판, 정직한 거절을 저관련으로 평가 등).</p>"""
+        rows = "".join(
+            f"<tr><td>{r['scenario']}</td><td>{r['q']}</td>"
+            f"<td>{'환각' if r.get('grounded') is False else '저관련'} · rel {r.get('relevance')}"
+            f" · {r.get('count', 1)}/{t2['runs']}회</td>"
+            f"<td>{r.get('judge_reason', '')}</td></tr>"
+            for r in t2["bad"]
+        )
+        flagged = (
+            f'<div class="tblwrap"><table><thead><tr><th>시나리오</th><th>질문</th>'
+            f"<th>플래그 · 빈도</th><th>심판 사유</th></tr></thead><tbody>{rows}</tbody></table></div>"
+            f'<p class="note">※ LLM 심판은 보수적으로 채점 — 위 케이스 상당수는 실제로는 정상'
+            f"(긴 목록 항목 누락 오판, 정직한 거절을 저관련으로 평가 등). 실제 환각률은 표기치보다 낮음.</p>"
+        )
 
-    t2_meta = f"Tier2 {t2['runs']}회·판정 {t2['judged']}턴" if t2 else "Tier2 미실행"
+    t2_meta = f"Tier2 {t2['runs']}회 · 판정 {t2['judged']}턴" if t2 else "Tier2 미실행"
+    method = """<div class="method">
+      <p><b>KPI 산정</b> — 시나리오 N회 반복 평균. Tier1은 응답 LLM 없이 라우팅·검색·가드레일을
+      결정적으로 측정(대량 반복), Tier2는 전체 그래프 답변을 LLM 심판으로 채점.</p>
+      <p><b>할루시네이션 기준 (MVP)</b> — ① 1차 신뢰 게이트: reranker 점수(pgvector confidence
+      가중합) &lt; 0.40이면 답변 대신 문의처 안내(가드레일). ② 2차 grounding: 답변 사실이 검색
+      근거·도구 결과에 있는지 LLM 심판이 판정.</p>
+      <p><b>데이터</b> — 2026학년도 총람 및 확보 학사자료(학번별 2021~2026 졸업요건·교육과정).</p>
+      <p><b>신뢰 범위 · 한계</b> — 수치는 현재 {t1['scen']}개 시나리오 스위트 기준(<b>in-sample</b>)이며
+      프로덕션 일반화 보장이 아니다. 결정적 컴포넌트(카테고리·검색·도구)의 100%는 반복 분산이 0이란
+      뜻이지 커버리지 완벽을 의미하지 않는다. LLM 심판은 보수적이라 실제 환각률은 표기치보다 낮을 수 있고,
+      어투·범위 밖 케이스를 늘릴수록 수치는 더 현실적으로 수렴한다.</p>
+    </div>"""
 
-    return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI 학과 길잡이 — 평가 대시보드</title>
-<style>
-:root {{
-  --bg:#f8fafc; --surface:#ffffff; --ink:#0f172a; --ink2:#475569; --muted:#94a3b8;
-  --border:#e2e8f0; --track:#eef2f6;
-}}
-@media (prefers-color-scheme: dark) {{
-  :root {{ --bg:#0b1120; --surface:#111827; --ink:#e5e7eb; --ink2:#9ca3af;
-    --muted:#6b7280; --border:#1f2937; --track:#1e293b; }}
-}}
-:root[data-theme="dark"] {{ --bg:#0b1120; --surface:#111827; --ink:#e5e7eb; --ink2:#9ca3af;
-  --muted:#6b7280; --border:#1f2937; --track:#1e293b; }}
-:root[data-theme="light"] {{ --bg:#f8fafc; --surface:#ffffff; --ink:#0f172a; --ink2:#475569;
-  --muted:#94a3b8; --border:#e2e8f0; --track:#eef2f6; }}
-* {{ box-sizing:border-box; }}
-body {{ margin:0; background:var(--bg); color:var(--ink);
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Malgun Gothic",sans-serif;
-  line-height:1.5; }}
-.wrap {{ max-width:1040px; margin:0 auto; padding:32px 20px 64px; }}
-h1 {{ font-size:24px; margin:0 0 4px; }}
-h2 {{ font-size:16px; margin:36px 0 14px; color:var(--ink); border-left:3px solid {C_AFTER};
-  padding-left:10px; }}
-.sub {{ color:var(--ink2); font-size:13px; margin:0; }}
-.grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }}
-.tile {{ background:var(--surface); border:1px solid var(--border); border-radius:12px;
-  padding:16px; }}
-.tile-val {{ font-size:26px; font-weight:700; letter-spacing:-.5px; }}
-.tile-label {{ font-size:13px; font-weight:600; margin-top:2px; }}
-.tile-sub {{ font-size:11px; color:var(--muted); margin-top:2px; }}
-.card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px;
-  padding:18px 20px; }}
-.bar-row, .ba-seg {{ display:flex; align-items:center; gap:10px; margin:7px 0; }}
-.bar-label {{ width:150px; font-size:13px; flex-shrink:0; }}
-.bar-label.lat {{ width:44px; color:var(--ink2); font-variant:tabular-nums; }}
-.bar-track {{ flex:1; height:14px; background:var(--track); border-radius:7px; overflow:hidden; }}
-.bar-fill {{ height:100%; border-radius:7px; }}
-.bar-val {{ width:78px; text-align:right; font-size:13px; font-variant-numeric:tabular-nums;
-  color:var(--ink2); flex-shrink:0; }}
-.ba-row {{ padding:10px 0; border-bottom:1px solid var(--border); }}
-.ba-row:last-child {{ border-bottom:0; }}
-.ba-tag {{ width:20px; font-size:11px; color:var(--muted); flex-shrink:0; }}
-.ba-seg {{ margin:4px 0 4px 0; }}
-.delta {{ color:{C_GOOD}; font-size:12px; font-weight:600; }}
-.delta.down {{ color:{C_CRIT}; }}
-.lat-block {{ margin-bottom:16px; }}
-.lat-title {{ font-size:13px; font-weight:600; margin-bottom:4px; }}
-.tbl {{ width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }}
-.tbl th, .tbl td {{ text-align:left; padding:6px 8px; border-bottom:1px solid var(--border);
-  vertical-align:top; }}
-.tbl th {{ color:var(--ink2); font-weight:600; }}
-.muted {{ color:var(--muted); font-size:12px; }}
-.method {{ font-size:13px; color:var(--ink2); }}
-.method b {{ color:var(--ink); }}
-.legend {{ font-size:12px; color:var(--muted); margin-top:6px; }}
-.dot {{ display:inline-block; width:9px; height:9px; border-radius:2px; margin:0 3px 0 10px;
-  vertical-align:middle; }}
-</style></head><body><div class="wrap">
-<h1>가천대 인공지능학과 길잡이 — 평가 대시보드</h1>
-<p class="sub">Tier1 {t1['scen']}개 시나리오 × {t1['runs']}회 = {t1['turns']}턴 · {t2_meta} · 생성 {kst}</p>
+    return f"""<div class="wrap">
+  <header class="masthead">
+    <h1>가천대 인공지능학과 길잡이 — 평가 대시보드</h1>
+    <p class="meta">Tier1 {t1['scen']}개 시나리오 × {t1['runs']}회 = {t1['turns']}턴 · {t2_meta} · 생성 {kst}</p>
+  </header>
+  {_section("Routing &amp; Retrieval", "핵심 KPI — 라우팅·검색 (Tier1, 결정적)", f'<div class="grid">{tiles}</div>')}
+  {_section("Answer Quality", "답변 품질 (Tier2, LLM 심판)", f'<div class="grid">{qtiles}</div>')}
+  {_section("Before / After", "개선 — 학번 되묻기 게이트 수정", f'<div class="card">{ba}{ba_legend}</div>')}
+  {_section("Latency", "지연", f'<div class="card">{lat}{lat_legend}</div>')}
+  {_section("Flagged", "주목 케이스 — Tier2 심판 플래그", f'<div class="card">{flagged}</div>')}
+  {_section("Methodology", "방법론 · 할루시네이션 기준", f'<div class="card">{method}</div>')}
+</div>"""
 
-<h2>핵심 KPI — 라우팅 &amp; 검색 (Tier1, 결정적)</h2>
-<div class="grid">{tiles}</div>
 
-<h2>답변 품질 (Tier2, LLM 심판)</h2>
-<div class="grid">{q_tiles or '<p class="muted">Tier2 데이터 없음</p>'}</div>
-
-<h2>개선 before / after — 학번 되묻기 게이트 수정</h2>
-<div class="card">{ba}
-<div class="legend"><span class="dot" style="background:{C_BEFORE}"></span>수정 전
-<span class="dot" style="background:{C_AFTER}"></span>수정 후</div></div>
-
-<h2>지연 (latency)</h2>
-<div class="card">{lat}
-<div class="legend"><span class="dot" style="background:{C_GOOD}"></span>p50
-<span class="dot" style="background:{C_AFTER}"></span>avg
-<span class="dot" style="background:{C_WARN}"></span>p95</div></div>
-
-<h2>주목 케이스 (Tier2 심판 플래그)</h2>
-<div class="card">{bad_rows or '<p class="muted">환각/저관련 플래그 없음</p>'}</div>
-
-<h2>방법론 &amp; 할루시네이션 기준</h2>
-<div class="card method">
-<p><b>KPI 산정:</b> 시나리오 N회 반복 평균. Tier1은 응답 LLM 없이 라우팅/검색/가드레일을
-결정적으로 측정, Tier2는 전체 그래프 답변을 LLM 심판으로 채점.</p>
-<p><b>할루시네이션 기준(MVP):</b> ① 1차 신뢰 게이트 — reranker 점수(pgvector confidence
-가중합) &lt; 0.40이면 답변 대신 문의처 안내(가드레일). ② 2차 grounding — 답변 사실이
-검색 근거/도구 결과에 있는지 LLM 심판이 판정.</p>
-<p><b>한계:</b> LLM 심판은 보수적으로 채점(긴 목록 항목 누락 오판, 정직한 거절을 저관련
-평가 등) — 실제 환각률은 표기치보다 낮음. 데이터는 2026학년도 총람 및 확보 학사자료 기준.</p>
-</div>
-</div></body></html>"""
+TITLE = "AI 학과 길잡이 — 평가 대시보드"
 
 
 def main():
     t1_raw = _load("tier1_raw.json")
-    t2_raw = _load("tier2_raw.json")
     if not t1_raw:
         print("tier1_raw.json 없음 — 먼저 eval.run_tier1 실행")
         return
+    t2_raw = _load("tier2_raw.json")
     t1 = agg_tier1(t1_raw)
     t2 = agg_tier2(t2_raw) if t2_raw else None
-    html = build_html(t1, t2)
-    out = os.path.join(RESULT_DIR, "dashboard.html")
-    with open(out, "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"대시보드 생성: {out}")
-    print(f"  Tier1: {t1['turns']}턴 / {t1['runs']}회, intent {t1['acc']['intent']:.1f}%")
-    if t2:
-        print(f"  Tier2: {t2['judged']}턴 / {t2['runs']}회, grounded {t2['grounded']:.1f}%")
+    body = build_body(t1, t2)
+
+    full = (
+        f'<!doctype html><html lang="ko"><head><meta charset="utf-8">'
+        f'<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{TITLE}</title><style>{CSS}</style></head><body>{body}</body></html>"
+    )
+    fragment = f"<title>{TITLE}</title>\n<style>{CSS}</style>\n{body}"
+
+    os.makedirs(RESULT_DIR, exist_ok=True)
+    with open(os.path.join(RESULT_DIR, "dashboard.html"), "w", encoding="utf-8") as f:
+        f.write(full)
+    with open(os.path.join(RESULT_DIR, "dashboard_artifact.html"), "w", encoding="utf-8") as f:
+        f.write(fragment)
+    print("대시보드 생성: eval/results/dashboard.html + dashboard_artifact.html")
+    print(
+        f"  Tier1 {t1['turns']}턴/{t1['runs']}회 intent {t1['acc']['intent']:.1f}%"
+        + (f" · Tier2 {t2['judged']}턴/{t2['runs']}회 grounded {t2['grounded']:.1f}%" if t2 else "")
+    )
 
 
 if __name__ == "__main__":
