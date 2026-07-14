@@ -80,6 +80,10 @@ def _build_meta(acc: dict) -> dict:
             sources = [{"source": data["출처"]}]
         response_type = "tool_answer"
 
+    elif intent == "reminder":
+        # 리마인드 확인/안내 메시지(출처 없음)
+        response_type = "reminder_answer"
+
     return {
         "type": response_type,
         "intent": intent,
@@ -118,6 +122,9 @@ async def chat_stream(req: ChatRequest):
         acc: dict = {}
         meta_sent = False
         answer_parts: list[str] = []
+        # reminder 노드는 response(LLM 스트리밍)를 거치지 않고 답을 직접 만든다.
+        # 그 최종 메시지를 담아 두었다가 루프 종료 후 한 번에 흘려보낸다.
+        direct_text: str | None = None
 
         try:
             async for ev in graph.astream_events(
@@ -128,11 +135,15 @@ async def chat_stream(req: ChatRequest):
                 kind = ev["event"]
                 node = ev.get("metadata", {}).get("langgraph_node")
 
-                # router/rag/tool 노드가 반환한 부분 상태를 누적 (response 시작 전 meta 구성용)
-                if kind == "on_chain_end" and node in ("router", "rag", "tool"):
+                # router/rag/tool/reminder 노드가 반환한 부분 상태를 누적 (meta 구성용)
+                if kind == "on_chain_end" and node in ("router", "rag", "tool", "reminder"):
                     output = ev["data"].get("output")
                     if isinstance(output, dict):
                         acc.update(output)
+                        # reminder처럼 LLM 스트리밍 없이 노드가 직접 만든 최종 메시지 포착
+                        msgs = output.get("messages")
+                        if msgs and getattr(msgs[-1], "content", None):
+                            direct_text = msgs[-1].content
 
                 # response 노드의 LLM 호출만 토큰 단위로 프론트에 전달
                 if kind == "on_chat_model_stream" and node == "response":
@@ -146,6 +157,12 @@ async def chat_stream(req: ChatRequest):
 
             if not meta_sent:
                 yield sse_event("meta", _build_meta(acc))
+                meta_sent = True
+
+            # LLM 토큰이 하나도 안 흐른 경우(예: reminder 노드) 최종 메시지를 delta로 전달
+            if not answer_parts and direct_text:
+                answer_parts.append(direct_text)
+                yield sse_event("delta", {"text": direct_text})
 
             yield sse_event("done", {"message": "complete"})
 

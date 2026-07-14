@@ -103,7 +103,10 @@ class ToolExecutor:
             return {"success": False, "error": "리마인드를 보낼 이메일 주소가 필요합니다."}
 
         내용 = 내용 or "학사 일정 리마인드"
-        remind_at = parse_remind_at(내용)
+        # 멀티턴 확인 흐름은 '의도 파악 시점'에 이미 파싱한 발송예정시각을 그대로
+        # 넘긴다(확인 턴에서 재파싱하면 "내일" 등 상대 표현이 다른 날로 밀리는
+        # 드리프트가 생김). 단일턴 경로 등 미전달 시에만 내용에서 재파싱한다.
+        remind_at = args.get("발송예정시각") or parse_remind_at(내용)
         self.reminders.create(
             email=이메일, content=내용, remind_at=remind_at, session_id=session_id
         )
