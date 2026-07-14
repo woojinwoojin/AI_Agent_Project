@@ -21,6 +21,7 @@ from app.core.prompts import (
     detect_link_topics,
 )
 from app.graph.state import AgentState
+from app.observability import record_rag_observation
 from app.repositories.contacts import format_contact, match_contact
 from app.repositories.rag import get_rag_repository
 from app.services.reminder_time import now_kst, parse_remind_at
@@ -468,6 +469,9 @@ async def rag_node(state: AgentState) -> dict:
         )
     except Exception:
         docs = []
+
+    # Langfuse trace에 검색 점수/출처/가드레일 판단 근거를 span으로 남긴다(비활성 시 no-op).
+    record_rag_observation(question=user_input, categories=categories, k=k, docs=docs)
 
     top_score = docs[0]["score"] if docs else 0.0
     guardrail = not docs or top_score < config.GUARDRAIL_MIN_SCORE

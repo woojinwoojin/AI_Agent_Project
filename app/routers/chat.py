@@ -19,7 +19,9 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
+from app import config
 from app.graph.graph import get_graph
+from app.observability import build_run_config, trace_context
 
 router = APIRouter(prefix="/api", tags=["chat"])
 logger = logging.getLogger("app.rag")
@@ -97,10 +99,22 @@ def _build_meta(acc: dict) -> dict:
 async def chat(req: ChatRequest):
     graph = get_graph()
     thread_id = req.session_id or "default"
-    result = await graph.ainvoke(
-        {"messages": [HumanMessage(content=req.message)], "session_id": thread_id},
-        config={"configurable": {"thread_id": thread_id}},
-    )
+    run_config = build_run_config(thread_id, "chat")
+
+    with trace_context(
+        trace_name="gachon-ai-chat",
+        session_id=thread_id,
+        tags=["gachon-ai", "langgraph", config.LANGFUSE_ENV],
+        metadata={
+            "endpoint": "/api/chat",
+            "project": "gachon-ai-agent",
+            "environment": config.LANGFUSE_ENV,
+        },
+    ):
+        result = await graph.ainvoke(
+            {"messages": [HumanMessage(content=req.message)], "session_id": thread_id},
+            config=run_config,
+        )
 
     answer = result["messages"][-1].content
     return {"answer": answer, **_build_meta(result)}
@@ -113,7 +127,7 @@ def sse_event(event: str, data: dict) -> str:
 @router.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
     thread_id = req.session_id or "default"
-    run_config = {"configurable": {"thread_id": thread_id}}
+    run_config = build_run_config(thread_id, "chat-stream")
 
     async def event_generator():
         yield sse_event("status", {"message": "질문을 분석하는 중이에요."})
@@ -127,33 +141,46 @@ async def chat_stream(req: ChatRequest):
         direct_text: str | None = None
 
         try:
-            async for ev in graph.astream_events(
-                {"messages": [HumanMessage(content=req.message)], "session_id": thread_id},
-                config=run_config,
-                version="v2",
+            # Langfuse trace context는 반드시 astream_events 루프를 감싸야 한다.
+            # (generator 바깥/StreamingResponse에 두면 실제 그래프 실행 시점엔
+            #  context가 이미 닫혀 trace 속성이 붙지 않는다.)
+            with trace_context(
+                trace_name="gachon-ai-chat-stream",
+                session_id=thread_id,
+                tags=["gachon-ai", "langgraph", "rag", config.LANGFUSE_ENV],
+                metadata={
+                    "endpoint": "/api/chat/stream",
+                    "project": "gachon-ai-agent",
+                    "environment": config.LANGFUSE_ENV,
+                },
             ):
-                kind = ev["event"]
-                node = ev.get("metadata", {}).get("langgraph_node")
+                async for ev in graph.astream_events(
+                    {"messages": [HumanMessage(content=req.message)], "session_id": thread_id},
+                    config=run_config,
+                    version="v2",
+                ):
+                    kind = ev["event"]
+                    node = ev.get("metadata", {}).get("langgraph_node")
 
-                # router/rag/tool/reminder 노드가 반환한 부분 상태를 누적 (meta 구성용)
-                if kind == "on_chain_end" and node in ("router", "rag", "tool", "reminder"):
-                    output = ev["data"].get("output")
-                    if isinstance(output, dict):
-                        acc.update(output)
-                        # reminder처럼 LLM 스트리밍 없이 노드가 직접 만든 최종 메시지 포착
-                        msgs = output.get("messages")
-                        if msgs and getattr(msgs[-1], "content", None):
-                            direct_text = msgs[-1].content
+                    # router/rag/tool/reminder 노드가 반환한 부분 상태를 누적 (meta 구성용)
+                    if kind == "on_chain_end" and node in ("router", "rag", "tool", "reminder"):
+                        output = ev["data"].get("output")
+                        if isinstance(output, dict):
+                            acc.update(output)
+                            # reminder처럼 LLM 스트리밍 없이 노드가 직접 만든 최종 메시지 포착
+                            msgs = output.get("messages")
+                            if msgs and getattr(msgs[-1], "content", None):
+                                direct_text = msgs[-1].content
 
-                # response 노드의 LLM 호출만 토큰 단위로 프론트에 전달
-                if kind == "on_chat_model_stream" and node == "response":
-                    if not meta_sent:
-                        yield sse_event("meta", _build_meta(acc))
-                        meta_sent = True
-                    token = ev["data"]["chunk"].content
-                    if token:
-                        answer_parts.append(token)
-                        yield sse_event("delta", {"text": token})
+                    # response 노드의 LLM 호출만 토큰 단위로 프론트에 전달
+                    if kind == "on_chat_model_stream" and node == "response":
+                        if not meta_sent:
+                            yield sse_event("meta", _build_meta(acc))
+                            meta_sent = True
+                        token = ev["data"]["chunk"].content
+                        if token:
+                            answer_parts.append(token)
+                            yield sse_event("delta", {"text": token})
 
             if not meta_sent:
                 yield sse_event("meta", _build_meta(acc))

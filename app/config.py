@@ -35,3 +35,11 @@ PARSED_DIR = ROOT / "output" / "parsed"
 GUARDRAIL_MIN_SCORE = float(os.getenv("GUARDRAIL_MIN_SCORE", "0.40"))
 
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+
+# Langfuse 관측성 (LangGraph trace). key가 비어 있거나 ENABLED=false면 완전히 비활성.
+# region별 base_url이 다르고 API key도 region 전용이다(현재 프로젝트는 Japan region).
+LANGFUSE_ENABLED = os.getenv("LANGFUSE_ENABLED", "false").lower() == "true"
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
+LANGFUSE_BASE_URL = os.getenv("LANGFUSE_BASE_URL", "https://jp.cloud.langfuse.com")
+LANGFUSE_ENV = os.getenv("LANGFUSE_ENV", "local")

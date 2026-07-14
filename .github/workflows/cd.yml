@@ -20,11 +20,14 @@ jobs:
           UPSTAGE_API_KEY: ${{ secrets.UPSTAGE_API_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+          # Langfuse 관측성 — key는 secrets, region/env 같은 비밀 아닌 값은 아래 .env에서 직접 지정
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
         with:
           host: ${{ secrets.GCE_HOST }}
           username: ${{ secrets.GCE_USER }}
           key: ${{ secrets.GCE_SSH_KEY }}
-          envs: UPSTAGE_API_KEY,RESEND_API_KEY,RESEND_FROM_EMAIL
+          envs: UPSTAGE_API_KEY,RESEND_API_KEY,RESEND_FROM_EMAIL,LANGFUSE_PUBLIC_KEY,LANGFUSE_SECRET_KEY
           script: |
             set -e
 
@@ -44,6 +47,11 @@ jobs:
             LLM_MODEL=solar-pro3
             RESEND_API_KEY=${RESEND_API_KEY}
             RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL:-onboarding@resend.dev}
+            LANGFUSE_ENABLED=true
+            LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+            LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+            LANGFUSE_BASE_URL=https://jp.cloud.langfuse.com
+            LANGFUSE_ENV=prod
             EOF
 
             sudo docker compose down
