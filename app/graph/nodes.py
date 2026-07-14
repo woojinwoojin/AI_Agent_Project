@@ -18,8 +18,10 @@ from app.core.admission import (
     parse_year_reply,
 )
 from app.core.prompts import (
+    CONTACT_GROUNDING,
     GUARDRAIL_GROUNDING,
     RAG_GROUNDING,
+    RECOMMEND_COURSES_RULES,
     RESPONSE_PROMPT,
     ROUTER_PROMPT,
     TOOL_GROUNDING,
@@ -28,7 +30,7 @@ from app.core.prompts import (
 )
 from app.graph.state import AgentState
 from app.observability import record_rag_observation
-from app.repositories.contacts import format_contact, match_contact
+from app.repositories.contacts import contact_phone, format_contact, match_contact
 from app.repositories.rag import get_rag_repository
 from app.services.reminder_time import now_kst, parse_remind_at
 from app.tools.executor import ToolExecutor
@@ -624,12 +626,14 @@ async def rag_node(state: AgentState) -> dict:
             "retrieved_docs": docs,
             "guardrail": True,
             "contact": contact,
+            "is_contact_question": is_contact_question,
             "applied_curriculum_year": applied_year,
         }
     return {
         "retrieved_docs": docs,
         "guardrail": False,
         "contact": None,
+        "is_contact_question": False,
         "applied_curriculum_year": applied_year,
     }
 
@@ -838,6 +842,16 @@ async def reminder_node(state: AgentState) -> dict:
     return _reminder_reply(_ask_email_msg(pending), pending)
 
 
+def _office_contact_line() -> str:
+    """도구 응답의 '학과사무실 확인' 안내에 쓸 실제 학과사무실 연락처(contacts.json).
+    봇이 번호를 지어내지 않도록 근거로 제공한다. 매칭 실패 시 빈 문자열."""
+    c = match_contact("학과사무실 전화번호")
+    phone = contact_phone(c)
+    if c.get("matched") and phone:
+        return f"{c['부서']} ☎ {phone}"
+    return ""
+
+
 def _year_note(state: AgentState) -> str:
     """학번-aware 응답에 붙일 '어느 년도 교육과정 기준으로 답했는지' 안내(투명성).
 
@@ -873,8 +887,15 @@ def build_response_inputs(state: AgentState) -> tuple[str, str]:
     link_hint = build_link_hint(detect_link_topics(user_input or "", state.get("category_l1")))
 
     if intent == "rag" and state.get("guardrail"):
-        contact_text = format_contact(state.get("contact"))
-        grounding = GUARDRAIL_GROUNDING.format(contact=contact_text)
+        contact = state.get("contact")
+        contact_text = format_contact(contact)
+        # 순수 연락처 질문이고 부서가 매칭됐으면(번호를 아는 경우) "자료에서 확인
+        # 어렵다"는 얼버무림 없이 자신 있게 바로 안내한다. 그 외(주제는 있으나 자료에
+        # 답이 없는 경우)는 기존 가드레일 문구로 솔직히 밝히고 문의처를 안내한다.
+        if state.get("is_contact_question") and contact and contact.get("matched"):
+            grounding = CONTACT_GROUNDING.format(contact=contact_text)
+        else:
+            grounding = GUARDRAIL_GROUNDING.format(contact=contact_text)
         if link_hint:
             grounding = f"{link_hint}\n{grounding}"
         system_prompt = f"{RESPONSE_PROMPT}\n\n{grounding}"
@@ -896,7 +917,19 @@ def build_response_inputs(state: AgentState) -> tuple[str, str]:
 
     elif intent == "tool":
         tool_result = json.dumps(state["tool_result"], ensure_ascii=False)
-        system_prompt = f"{RESPONSE_PROMPT}\n\n{TOOL_GROUNDING.format(tool_result=tool_result)}"
+        grounding = TOOL_GROUNDING.format(tool_result=tool_result)
+        # 과목 추천은 Solar가 목록을 무시하고 지어내는 환각이 잦아 전용 규칙을 덧붙인다.
+        if state.get("tool_name") == "recommend_courses":
+            grounding = f"{grounding}\n{RECOMMEND_COURSES_RULES}"
+        # 도구 응답은 "학과사무실 확인"을 권하는데, 봇이 번호를 지어내지 않도록
+        # contacts.json의 실제 학과사무실 연락처를 근거로 함께 제공한다.
+        office = _office_contact_line()
+        if office:
+            grounding = (
+                f"{grounding}\n\n[학과사무실 연락처] 최종 확인을 권할 때 이 번호만 그대로 "
+                f"안내하고, 다른 번호는 지어내지 마라: {office}"
+            )
+        system_prompt = f"{RESPONSE_PROMPT}\n\n{grounding}"
 
     else:
         system_prompt = RESPONSE_PROMPT

@@ -43,6 +43,10 @@ class AgentState(TypedDict):
     guardrail: bool
     contact: dict | None
 
+    # 순수 연락처 질문(예: "학과사무실 전화번호")인지. True면 응답에서 "자료에서
+    # 확인 어렵다" 얼버무림 없이 contacts.json의 번호를 자신 있게 바로 안내한다.
+    is_contact_question: bool
+
     session_id: str
 
     # 리마인드 등 여러 턴에 걸친 사용자 확인 절차 진행 상태.
@@ -66,6 +70,7 @@ def create_initial_state(session_id: str, messages: list[BaseMessage] | None = N
         tool_result=None,
         guardrail=False,
         contact=None,
+        is_contact_question=False,
         session_id=session_id,
         pending_action=None,
     )

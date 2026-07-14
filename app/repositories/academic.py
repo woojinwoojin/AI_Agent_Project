@@ -20,7 +20,19 @@ class AcademicRepository:
                 params.append(트랙)
             sql += " ORDER BY 이수구분, 교과목명"
             rows = conn.execute(sql, params).fetchall()
-            return [{"교과목명": r[0], "이수구분": r[1], "학점": r[2], "트랙": r[3]} for r in rows]
+            # 개설학년/개설학기를 과목마다 명시한다(응답 LLM이 개별 과목에 엉뚱한
+            # 학년/학기를 임의로 붙이는 환각을 막기 위한 근거).
+            return [
+                {
+                    "교과목명": r[0],
+                    "이수구분": r[1],
+                    "학점": r[2],
+                    "트랙": r[3],
+                    "개설학년": 학년,
+                    "개설학기": 학기,
+                }
+                for r in rows
+            ]
         finally:
             conn.close()
 
