@@ -13,12 +13,12 @@ from pydantic import BaseModel, Field
 from app import config
 from app.core.prompts import (
     GUARDRAIL_GROUNDING,
-    OFFICIAL_LINKS,
     RAG_GROUNDING,
     RESPONSE_PROMPT,
     ROUTER_PROMPT,
     TOOL_GROUNDING,
     build_link_hint,
+    detect_link_topics,
 )
 from app.graph.state import AgentState
 from app.repositories.contacts import format_contact, match_contact
@@ -681,28 +681,16 @@ async def reminder_node(state: AgentState) -> dict:
     return _reminder_reply(_ask_email_msg(pending), pending)
 
 
-# 공식 링크 안내 트리거: 라우터가 매긴 category_l1 후보 또는 질문 텍스트의
-# 키워드로 관련 공식 페이지 topic을 찾는다. "예비수강신청 일자"처럼 카테고리는
-# course로 잡혀도 실제로는 일정 질문인 경우를 놓치지 않으려 텍스트도 본다.
-# (링크 데이터·우선순위는 prompts.OFFICIAL_LINKS 에 정의)
-def _detect_link_topics(state: AgentState) -> list[str]:
-    """질문과 관련된 공식 링크 topic 키 목록을 우선순위 순으로 반환."""
-    text = state["messages"][-1].content or ""
-    cats = state.get("category_l1") or []
-    matched: list[str] = []
-    for key, spec in OFFICIAL_LINKS.items():
-        if any(c in cats for c in spec.get("categories", ())) or any(
-            kw in text for kw in spec.get("keywords", ())
-        ):
-            matched.append(key)
-    return matched
-
-
 def build_response_inputs(state: AgentState) -> tuple[str, str]:
     """최종 응답 생성을 위한 system_prompt, user_input 생성."""
     user_input = state["messages"][-1].content
     intent = state["intent"]
-    link_hint = build_link_hint(_detect_link_topics(state))
+    # 공식 링크 안내 트리거: 라우터가 매긴 category_l1 후보 또는 질문 텍스트의
+    # 키워드로 관련 공식 페이지 topic을 찾아, 자료에 답이 없을 때 링크 힌트를
+    # 그라운딩에 붙인다. "예비수강신청 일자"처럼 category가 course여도 실제로는
+    # 일정 질문인 경우를 놓치지 않으려 텍스트도 본다. (데이터·규칙은
+    # prompts.OFFICIAL_LINKS / detect_link_topics 참고)
+    link_hint = build_link_hint(detect_link_topics(user_input or "", state.get("category_l1")))
 
     if intent == "rag" and state.get("guardrail"):
         contact_text = format_contact(state.get("contact"))

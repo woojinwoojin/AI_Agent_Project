@@ -331,6 +331,24 @@ OFFICIAL_LINKS: dict[str, dict] = {
 }
 
 
+def detect_link_topics(text: str, categories: list[str] | None = None) -> list[str]:
+    """질문 텍스트 + category_l1 후보로 관련 공식 링크 topic 키 목록을 반환.
+
+    매칭 규칙(둘 중 하나라도 걸리면 후보): 라우터가 매긴 category_l1에 spec의
+    categories가 포함되거나(coarse), 질문 텍스트에 spec의 keywords가 있으면(fine).
+    순수 함수(무거운 의존성 없음)라 단위 테스트가 앱 그래프를 import하지 않아도 된다.
+    반환 순서 = OFFICIAL_LINKS 선언 순서(= 우선순위).
+    """
+    cats = categories or []
+    matched: list[str] = []
+    for key, spec in OFFICIAL_LINKS.items():
+        if any(c in cats for c in spec.get("categories", ())) or any(
+            kw in text for kw in spec.get("keywords", ())
+        ):
+            matched.append(key)
+    return matched
+
+
 def build_link_hint(topic_keys: list[str]) -> str:
     """매칭된 topic들의 공식 링크를 안내하는 그라운딩 힌트 블록을 만든다.
 
