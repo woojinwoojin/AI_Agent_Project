@@ -367,42 +367,44 @@ async def router_node(state: AgentState) -> dict:
         # 새 학사 질문으로 판단 → 리마인드 대기 상태를 버리고 아래 일반 라우팅을 계속 진행
         pending = None
 
-    structured_llm = get_llm().with_structured_output(IntentRoute)
-    llm_category = "none"
-    try:
-        result = await structured_llm.ainvoke(
-            [SystemMessage(content=ROUTER_PROMPT), HumanMessage(content=user_input)]
-        )
-        llm_intent = result.intent
-        llm_category = result.category_l1
-    except Exception:
-        llm_intent = "rag"
-    intent = llm_intent
-
-    # 도구 판별: 카테고리 규칙과 동일하게 규칙(resolve_tool)을 주 경로로 쓴다.
-    # LLM structured output이 "학점 30 남았는데 얼마나 더?" 같은 축약 표현(전선/전필 등)에서
-    # intent를 tool 대신 rag로 잘못 분류하는 경우가 있어, LLM 판단과 무관하게 규칙이 도구
-    # 패턴을 찾으면 강제로 tool로 승격한다. LLM이 tool이라 했는데 규칙이 못 찾으면(드문
-    # 오탐) rag로 폴백한다.
+    # ── 규칙 우선 판정: 도구/리마인드로 확정되면 LLM 호출을 생략한다 ──────────
+    # 이 두 경우엔 LLM이 뭐라 하든 아래 규칙(resolve_tool / _looks_like_reminder)이
+    # intent를 덮어쓰고, 카테고리도 안 쓰므로 LLM 출력이 전부 버려졌다(순수 낭비).
+    # 규칙을 새로 늘리는 게 아니라 기존 판정을 LLM '앞'으로 옮겨, 도구·리마인드 요청의
+    # 라우터 LLM 지연(~1.5s)만 제거한다. chat/rag 구분과 카테고리 fallback은 여전히
+    # LLM이 담당하므로 그 경로의 동작은 동일하다.
     tool_name, tool_args = resolve_tool(user_input)
-    tool_forced_by_rule = False
+    tool_forced_by_rule = tool_name is not None
+    llm_called = False
+    llm_intent = "skipped"
+    llm_category = "none"
 
     if tool_name is not None:
-        if intent != "tool":
-            tool_forced_by_rule = True
         intent = "tool"
-    elif intent == "tool":
-        intent = "rag"  # LLM은 tool이라 했지만 규칙이 인자를 못 찾음 → RAG로 폴백
-
-    # 안전망: chat으로 분류됐어도 진짜 잡담(인사/감사/사용법 등)이 아니면 rag로 강제.
-    # (근거 문서 없이 LLM이 학과 정보를 자유생성하다 지어내는 환각 방지)
-    if intent == "chat" and not _looks_like_smalltalk(user_input):
-        intent = "rag"
-
-    # 새 리마인드 요청: 리마인드 신호가 있으면 reminder 흐름으로 시작한다.
-    # (졸업계산·과목추천처럼 규칙으로 확정된 tool 요청은 그대로 두고 그 외에서만 승격)
-    if intent != "tool" and _looks_like_reminder(user_input):
+    elif _looks_like_reminder(user_input):
+        # (졸업계산·과목추천처럼 규칙으로 확정된 tool은 위에서 이미 잡혔으므로 여기선 순수 리마인드)
         intent = "reminder"
+    else:
+        # 규칙으로 확정 못함 → LLM으로 chat/rag 구분 + 카테고리 보조 분류
+        llm_called = True
+        structured_llm = get_llm().with_structured_output(IntentRoute)
+        try:
+            result = await structured_llm.ainvoke(
+                [SystemMessage(content=ROUTER_PROMPT), HumanMessage(content=user_input)]
+            )
+            llm_intent = result.intent
+            llm_category = result.category_l1
+        except Exception:
+            llm_intent = "rag"
+        intent = llm_intent
+
+        # LLM은 tool이라 했지만 규칙이 인자를 못 찾음 → RAG로 폴백
+        if intent == "tool":
+            intent = "rag"
+        # 안전망: chat으로 분류됐어도 진짜 잡담(인사/감사/사용법 등)이 아니면 rag로 강제.
+        # (근거 문서 없이 LLM이 학과 정보를 자유생성하다 지어내는 환각 방지)
+        if intent == "chat" and not _looks_like_smalltalk(user_input):
+            intent = "rag"
 
     # 카테고리 분류: 키워드 규칙(다중 매칭 + 시간 신호 확장) 주 경로 + LLM 보조(규칙 미매칭 시).
     # ("none"/contact 는 문서가 없어 필터 안 함 → 전체 검색 후 가드레일이 문의처 안내)
@@ -422,6 +424,7 @@ async def router_node(state: AgentState) -> dict:
                 "stage": "router",
                 "session_id": state.get("session_id"),
                 "question": user_input,
+                "llm_called": llm_called,
                 "llm_intent": llm_intent,
                 "intent": intent,
                 "tool_forced_by_rule": tool_forced_by_rule,
