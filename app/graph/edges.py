@@ -5,7 +5,9 @@ from typing import Literal
 from app.graph.state import AgentState
 
 
-def route_by_intent(state: AgentState) -> Literal["rag", "tool", "reminder", "response"]:
+def route_by_intent(
+    state: AgentState,
+) -> Literal["rag", "tool", "reminder", "ask_year", "response"]:
     intent = state.get("intent") or "chat"
     if intent == "rag":
         return "rag"
@@ -13,4 +15,6 @@ def route_by_intent(state: AgentState) -> Literal["rag", "tool", "reminder", "re
         return "tool"
     if intent == "reminder":
         return "reminder"
+    if intent == "ask_year":
+        return "ask_year"
     return "response"

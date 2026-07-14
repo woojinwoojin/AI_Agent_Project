@@ -86,6 +86,10 @@ def _build_meta(acc: dict) -> dict:
         # 리마인드 확인/안내 메시지(출처 없음)
         response_type = "reminder_answer"
 
+    elif intent == "ask_year":
+        # 학번 되묻기 메시지(출처 없음)
+        response_type = "ask_year_answer"
+
     return {
         "type": response_type,
         "intent": intent,
@@ -162,8 +166,14 @@ async def chat_stream(req: ChatRequest):
                     kind = ev["event"]
                     node = ev.get("metadata", {}).get("langgraph_node")
 
-                    # router/rag/tool/reminder 노드가 반환한 부분 상태를 누적 (meta 구성용)
-                    if kind == "on_chain_end" and node in ("router", "rag", "tool", "reminder"):
+                    # router/rag/tool/reminder/ask_year 노드가 반환한 부분 상태를 누적 (meta 구성용)
+                    if kind == "on_chain_end" and node in (
+                        "router",
+                        "rag",
+                        "tool",
+                        "reminder",
+                        "ask_year",
+                    ):
                         output = ev["data"].get("output")
                         if isinstance(output, dict):
                             acc.update(output)
