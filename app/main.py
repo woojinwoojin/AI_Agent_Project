@@ -1,4 +1,5 @@
 import logging
+import re
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -81,14 +82,30 @@ async def home(request: Request):
     )
 
 
+# content에 사용자가 직접 적어 넣은 이메일이 섞일 수 있어 로그 표시 전 마스킹한다.
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
 @app.get("/reminders", response_class=HTMLResponse)
 async def reminder_logs(request: Request):
-    reminders = get_reminder_repository().list_recent(limit=100)
+    # 데이터는 서버에서 렌더하지 않는다. 클라이언트가 자신의 session_id(sessionStorage)로
+    # /api/reminders에서 자기 세션 것만 가져와 렌더 → 세션 격리 + 탭 종료 시 함께 소멸.
     return templates.TemplateResponse(
         request=request,
         name="reminders.html",
-        context={"reminders": reminders},
+        context={},
     )
+
+
+@app.get("/api/reminders")
+async def reminder_logs_api(session_id: str = ""):
+    """현재 세션이 등록한 리마인드만 반환(이메일 미포함, content 이메일 마스킹)."""
+    if not session_id:
+        return {"reminders": []}
+    rows = get_reminder_repository().list_by_session(session_id, limit=100)
+    for r in rows:
+        r["content"] = _EMAIL_RE.sub("[이메일]", r["content"] or "")
+    return {"reminders": rows}
 
 
 @app.get("/health")
