@@ -80,12 +80,30 @@ _YEAR_SENSITIVE_KEYWORDS = (
     "이수구분",
     "필수학점",
     "필요학점",
-    # 전공교육과정표(구성)
+    # 전공교육과정표(구성). "트랙"은 아래에서 조건부 처리(현행 트랙명 명시 시 제외).
     "교육과정",
     "커리큘럼",
     "전공교육과정",
-    "트랙",
 )
+
+# 현행(2026) 트랙명 토큰. 트랙 구성은 학번별로 다르지만, 이 현행 트랙명을 콕 집어
+# 물으면(예: "AIoT 트랙 과목") 현행 기준이 명확하므로 학번을 되묻지 않는다.
+_CURRENT_TRACK_TOKENS = (
+    "aiot",
+    "vision",
+    "language",
+    "비전",
+    "자연어",
+    "intelligent",
+    "인텔리전트",
+    "부트캠프",
+    "bootcamp",
+)
+
+
+def _mentions_current_track(text: str) -> bool:
+    low = text.lower()
+    return any(tok in low for tok in _CURRENT_TRACK_TOKENS)
 
 
 def is_year_sensitive_question(text: str) -> bool:
@@ -93,9 +111,13 @@ def is_year_sensitive_question(text: str) -> bool:
     t = text or ""
     if any(kw in t for kw in _YEAR_SENSITIVE_KEYWORDS):
         return True
-    # "졸업 몇 학점?", "졸업하려면 이수해야" 등 졸업 + 학점/이수/요건 조합도 년도-민감.
-    # (단독 "졸업 언제?"는 일정 질문이라 학점/이수/요건/필요/조건이 함께 있어야 True)
-    if "졸업" in t and any(w in t for w in ("학점", "이수", "요건", "필요", "조건", "몇 ")):
+    # "트랙"은 학번별 구성이 달라 원칙적으로 년도-민감이나, 현행 트랙명(AIoT 등)을
+    # 명시하면 현행 기준이 분명하므로 되묻지 않는다.
+    if "트랙" in t and not _mentions_current_track(t):
+        return True
+    # "졸업 N학점/이수/요건..." 등 졸업요건성 질문만 년도-민감. bare "몇 "은 제외한다
+    # (졸업작품 '몇 학년', 사회봉사 '몇 시간 해야 졸업' 같은 비-요건 질문 오탐 방지).
+    if "졸업" in t and any(w in t for w in ("학점", "이수", "요건", "필요", "조건")):
         return True
     return False
 

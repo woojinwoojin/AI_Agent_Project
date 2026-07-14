@@ -69,6 +69,21 @@ class TestIsYearSensitiveQuestion:
         # 단독 '졸업 언제?'는 일정 질문 → 학번 무관.
         assert not is_year_sensitive_question("졸업식 언제야?")
 
+    def test_current_track_name_not_year_sensitive(self):
+        # 현행 트랙명을 콕 집으면 현행 기준이 분명 → 되묻지 않는다.
+        assert not is_year_sensitive_question("AIoT 트랙은 무슨 과목이 있어?")
+        assert not is_year_sensitive_question("Vision & Language 트랙 과목 알려줘")
+        assert not is_year_sensitive_question("부트캠프 과정 뭐 있어?")
+        # 트랙명 없는 일반 트랙 질문은 여전히 년도-민감(구성이 학번별로 다름).
+        assert is_year_sensitive_question("전공 트랙 뭐가 있어?")
+
+    def test_graduation_non_requirement_not_sensitive(self):
+        # '졸업' + 학점/이수/요건 없이 bare 숫자질문은 요건이 아니므로 학번 무관.
+        assert not is_year_sensitive_question("졸업작품 몇 학년에 해?")
+        assert not is_year_sensitive_question("사회봉사 몇 시간 해야 졸업해?")
+        # 반면 졸업요건성(학점/조건 동반)은 여전히 년도-민감.
+        assert is_year_sensitive_question("졸업하려면 몇 학점 필요해?")
+
 
 class TestApplicableCurriculumYear:
     def test_exact_match(self):
