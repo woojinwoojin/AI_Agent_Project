@@ -9,6 +9,7 @@ import json
 import re
 
 from app import config, db, embeddings, retrieval
+from app.core.graduation import load_graduation_records
 
 CHUNK_TARGET = 700  # 청크 목표 길이(문자)
 
@@ -185,11 +186,8 @@ def ingest_courses(conn):
 
 
 def _load_graduation_by_year() -> list[dict]:
-    """학번별 졸업요건 리스트. 없으면 구 단일 파일(2026)로 폴백."""
-    path = config.STRUCTURED_DIR / "graduation_by_year.json"
-    if path.exists():
-        return load_json(path)
-    return [load_json(config.STRUCTURED_DIR / "graduation_requirements.json")]
+    """학번별 졸업요건 리스트(정규화 완료). 구 단일 파일로 폴백해도 동일 스키마."""
+    return load_graduation_records(config.STRUCTURED_DIR)
 
 
 def ingest_graduation(conn):

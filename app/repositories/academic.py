@@ -1,9 +1,8 @@
 """학사 정형 데이터 접근 (courses / graduation_requirements)."""
 
-import json
-
 from app import config, db
 from app.core.admission import applicable_curriculum_year
+from app.core.graduation import load_graduation_records
 
 
 class AcademicRepository:
@@ -26,15 +25,9 @@ class AcademicRepository:
             conn.close()
 
     def _load_by_year(self) -> list[dict]:
-        """학번별 졸업요건 리스트(신뢰 원본). 없으면 단일 2026 파일로 폴백."""
-        path = config.STRUCTURED_DIR / "graduation_by_year.json"
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-        # 폴백: 구 단일 파일(2026)만 있는 환경
-        legacy = json.loads(
-            (config.STRUCTURED_DIR / "graduation_requirements.json").read_text(encoding="utf-8")
-        )
-        return [legacy]
+        """학번별 졸업요건 리스트(신뢰 원본, 정규화 완료). 구 단일 파일로 폴백해도
+        동일 스키마를 보장한다(app.core.graduation)."""
+        return load_graduation_records(config.STRUCTURED_DIR)
 
     def available_graduation_years(self) -> set[int]:
         """졸업요건 데이터를 보유한 교육과정 년도 집합."""
