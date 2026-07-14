@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from app import db
+from app.services.reminder_time import now_kst
 
 
 class ReminderRepository:
@@ -17,7 +18,7 @@ class ReminderRepository:
                 VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (session_id, email, content, remind_at, datetime.now()),
+                (session_id, email, content, remind_at, now_kst()),
             ).fetchone()
             return row[0]
         finally:
@@ -46,7 +47,7 @@ class ReminderRepository:
         try:
             conn.execute(
                 "UPDATE reminder_requests SET status = 'sent', sent_at = %s WHERE id = %s",
-                (datetime.now(), reminder_id),
+                (now_kst(), reminder_id),
             )
         finally:
             conn.close()
