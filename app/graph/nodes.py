@@ -18,6 +18,7 @@ from app.core.admission import (
     parse_year_reply,
 )
 from app.core.prompts import (
+    CONTACT_GROUNDING,
     GUARDRAIL_GROUNDING,
     RAG_GROUNDING,
     RECOMMEND_COURSES_RULES,
@@ -625,12 +626,14 @@ async def rag_node(state: AgentState) -> dict:
             "retrieved_docs": docs,
             "guardrail": True,
             "contact": contact,
+            "is_contact_question": is_contact_question,
             "applied_curriculum_year": applied_year,
         }
     return {
         "retrieved_docs": docs,
         "guardrail": False,
         "contact": None,
+        "is_contact_question": False,
         "applied_curriculum_year": applied_year,
     }
 
@@ -884,8 +887,15 @@ def build_response_inputs(state: AgentState) -> tuple[str, str]:
     link_hint = build_link_hint(detect_link_topics(user_input or "", state.get("category_l1")))
 
     if intent == "rag" and state.get("guardrail"):
-        contact_text = format_contact(state.get("contact"))
-        grounding = GUARDRAIL_GROUNDING.format(contact=contact_text)
+        contact = state.get("contact")
+        contact_text = format_contact(contact)
+        # 순수 연락처 질문이고 부서가 매칭됐으면(번호를 아는 경우) "자료에서 확인
+        # 어렵다"는 얼버무림 없이 자신 있게 바로 안내한다. 그 외(주제는 있으나 자료에
+        # 답이 없는 경우)는 기존 가드레일 문구로 솔직히 밝히고 문의처를 안내한다.
+        if state.get("is_contact_question") and contact and contact.get("matched"):
+            grounding = CONTACT_GROUNDING.format(contact=contact_text)
+        else:
+            grounding = GUARDRAIL_GROUNDING.format(contact=contact_text)
         if link_hint:
             grounding = f"{link_hint}\n{grounding}"
         system_prompt = f"{RESPONSE_PROMPT}\n\n{grounding}"
