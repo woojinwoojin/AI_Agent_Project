@@ -474,7 +474,15 @@ async def rag_node(state: AgentState) -> dict:
     record_rag_observation(question=user_input, categories=categories, k=k, docs=docs)
 
     top_score = docs[0]["score"] if docs else 0.0
-    guardrail = not docs or top_score < config.GUARDRAIL_MIN_SCORE
+    # 연락처/문의처 질문은 답(부서 전화번호 등)이 RAG 문서가 아니라 contacts.json에
+    # 있다. 검색이 우연히 무관한 문서를 임계값 이상으로 올리면 거기서 엉뚱한 번호를
+    # 긁어온다(예: 외국어졸업인증 문서의 국제어학원 번호를 '학과사무실/교무처'로
+    # 오기). 그래서 연락처 질문은 점수와 무관하게 항상 문의처(가드레일) 경로로 답해
+    # contacts.json의 정확한 부서·번호를 쓰게 한다.
+    # 순수 연락처 질문(contact 카테고리만 매칭)일 때만 강제한다. "졸업요건 문의"처럼
+    # 다른 주제 + '문의'가 섞인 질문은 정상 RAG로 내용을 답하게 둔다.
+    is_contact_question = classify_categories(user_input) == ["contact"]
+    guardrail = is_contact_question or not docs or top_score < config.GUARDRAIL_MIN_SCORE
     contact = match_contact(user_input) if guardrail else None
 
     logger.info(
@@ -485,6 +493,7 @@ async def rag_node(state: AgentState) -> dict:
                 "question": user_input,
                 "top_score": top_score,
                 "guardrail": guardrail,
+                "is_contact_question": is_contact_question,
                 "contact_matched": contact is not None,
             },
             ensure_ascii=False,
