@@ -139,20 +139,225 @@ TOOL_GROUNDING = """
 {tool_result}
 """
 
-# ===== 학사일정 안내 링크 (일정/날짜 질문에 구체 일자를 못 찾을 때) =====
-# 가천대학교 공식 학사일정 페이지. 개강·수강신청·시험·성적 등 '날짜성' 질문에서
-# 근거 자료에 구체적 일자가 없을 때, 날짜를 지어내지 말고 이 페이지로 안내한다.
-ACADEMIC_CALENDAR_URL = "https://www.gachon.ac.kr/kor/1075/subview.do"
+# ===== 상황별 공식 안내 링크 (자료에 답이 없을 때 함께 안내) =====
+# 가천대학교 공식 홈페이지 네비게이션에서 직접 추출한 경로다. 봇이 근거 자료로
+# 정확히 답하지 못하는 주제일 때, 날짜·금액·규정 등을 지어내지 말고 아래 해당
+# 공식 페이지로 사용자를 안내하기 위한 데이터다. 매칭 규칙:
+#   - categories: 라우터가 매긴 category_l1 후보에 이 값이 있으면 매칭
+#   - keywords: 사용자 질문 텍스트에 이 부분 문자열이 있으면 매칭
+# (둘 중 하나라도 걸리면 해당 링크가 후보가 된다. 노출 개수는 노드에서 제한)
+# 딕셔너리 순서 = 우선순위(여러 개 매칭 시 앞쪽부터 노출).
+GACHON_BASE = "https://www.gachon.ac.kr"
 
-ACADEMIC_CALENDAR_HINT = f"""
-[학사일정 안내 규칙]
-이 질문은 개강·수강신청·시험·성적 등 '학사일정(날짜/기간)'에 관한 것이다.
-아래 근거 자료에서 구체적인 일자·기간을 확인할 수 없으면, 절대 날짜를
-추측하거나 지어내지 말고 가천대학교 공식 학사일정 페이지를 함께 안내해라.
-  - 가천대학교 공식 학사일정: {ACADEMIC_CALENDAR_URL}
-근거 자료에 명확한 일자가 있으면 그 값을 먼저 안내하고, 이 링크는 "더 자세한
-전체 학사일정은 여기서 확인할 수 있어요"처럼 덧붙이는 용도로만 써라.
+# 하위 호환: 기존에 이 상수를 참조하던 코드가 있어 유지한다(학사일정 링크).
+ACADEMIC_CALENDAR_URL = f"{GACHON_BASE}/kor/1075/subview.do"
+
+OFFICIAL_LINKS: dict[str, dict] = {
+    "graduation": {
+        "label": "가천대 졸업 안내",
+        "desc": "졸업요건·졸업사정·졸업인증 기준",
+        "url": f"{GACHON_BASE}/kor/3219/subview.do",
+        "categories": ("graduation",),
+        "keywords": ("졸업요건", "졸업사정", "졸업학점", "졸업조건", "졸업인증", "졸업기준"),
+    },
+    "academic_calendar": {
+        "label": "가천대 학사일정",
+        "desc": "개강·수강신청·시험·성적 등 학기 전체 일정(날짜)",
+        "url": ACADEMIC_CALENDAR_URL,
+        "categories": ("academic_calendar",),
+        "keywords": (
+            "학사일정",
+            "개강",
+            "종강",
+            "방학",
+            "중간고사",
+            "기말고사",
+            "시험기간",
+            "수강신청",
+            "예비수강신청",
+            "수강정정",
+            "수강포기",
+            "보강",
+            "휴강",
+        ),
+    },
+    "course": {
+        "label": "가천대 수강 안내",
+        "desc": "수강신청·정정·포기 절차와 방법",
+        "url": f"{GACHON_BASE}/kor/1081/subview.do",
+        "categories": ("course",),
+        "keywords": ("수강신청 방법", "장바구니", "재수강", "수강편람", "수강신청프로그램"),
+    },
+    "yoram": {
+        "label": "가천대 요람",
+        "desc": "학과 교육과정·이수체계·과목 구성",
+        "url": f"{GACHON_BASE}/kor/1097/subview.do",
+        "categories": (),
+        "keywords": ("요람", "교육과정", "이수체계", "커리큘럼", "이수모형", "교과과정"),
+    },
+    "leave_return": {
+        "label": "가천대 학적변동 안내",
+        "desc": "휴학·복학·자퇴 등 학적변동 신청",
+        "url": f"{GACHON_BASE}/kor/4021/subview.do",
+        "categories": ("leave_return",),
+        "keywords": ("휴학", "복학", "자퇴", "제적", "학적변동"),
+    },
+    "tuition": {
+        "label": "가천대 등록금 납부 안내",
+        "desc": "등록금 납부기간·분납·고지서",
+        "url": f"{GACHON_BASE}/kor/1106/subview.do",
+        "categories": (),
+        "keywords": ("등록금", "납부", "수납", "분납", "고지서", "등록기간"),
+    },
+    "scholarship": {
+        "label": "가천대 장학제도 안내",
+        "desc": "교내외 장학금 종류·신청 조건",
+        "url": f"{GACHON_BASE}/kor/3126/subview.do",
+        "categories": (),
+        "keywords": ("장학금", "장학", "국가장학", "성적장학", "교내장학"),
+    },
+    "certificate": {
+        "label": "가천대 제증명 발급 안내",
+        "desc": "재학·졸업·성적 등 제증명 발급",
+        "url": f"{GACHON_BASE}/kor/1088/subview.do",
+        "categories": (),
+        "keywords": ("증명서", "제증명", "재학증명", "졸업증명", "성적증명", "발급"),
+    },
+    "grade_season": {
+        "label": "가천대 성적/계절학기 안내",
+        "desc": "성적 정정·이의신청, 계절학기 운영",
+        "url": f"{GACHON_BASE}/kor/3207/subview.do",
+        "categories": (),
+        "keywords": ("계절학기", "성적정정", "성적이의", "재이수", "학점포기"),
+    },
+    "credit_recognition": {
+        "label": "가천대 학점인정 안내",
+        "desc": "편입·교류 등 학점인정 기준",
+        "url": f"{GACHON_BASE}/kor/3211/subview.do",
+        "categories": (),
+        "keywords": ("학점인정", "편입학점", "교류학점", "선이수"),
+    },
+    "transfer_major": {
+        "label": "가천대 전공/교직 안내",
+        "desc": "전과·복수전공·부전공·교직 이수",
+        "url": f"{GACHON_BASE}/kor/3214/subview.do",
+        "categories": (),
+        "keywords": ("전과", "복수전공", "부전공", "교직", "연계전공"),
+    },
+    "field_practice": {
+        "label": "가천대 현장실습 안내",
+        "desc": "현장실습(인턴십) 학점 운영",
+        "url": f"{GACHON_BASE}/kor/7966/subview.do",
+        "categories": (),
+        "keywords": ("현장실습", "인턴십 학점", "실습학점"),
+    },
+    "attendance": {
+        "label": "가천대 출결/유고결석 안내",
+        "desc": "출결 기준·유고결석 인정 절차",
+        "url": f"{GACHON_BASE}/kor/8597/subview.do",
+        "categories": (),
+        "keywords": ("출결", "유고결석", "출석인정", "결석"),
+    },
+    "forms": {
+        "label": "가천대 학사 각종서식",
+        "desc": "학사 관련 각종 신청서 양식 다운로드",
+        "url": f"{GACHON_BASE}/kor/1087/subview.do",
+        "categories": (),
+        "keywords": ("각종서식", "학사서식", "신청서 양식", "서식 다운로드"),
+    },
+    "dormitory": {
+        "label": "가천대 학생생활관(기숙사)",
+        "desc": "기숙사 입사 신청·생활 안내",
+        "url": f"{GACHON_BASE}/sites/dormitory/index.do",
+        "categories": (),
+        "keywords": ("기숙사", "생활관", "사생", "입사", "호실"),
+    },
+    "library": {
+        "label": "가천대 도서관",
+        "desc": "도서관 이용·대출·열람실",
+        "url": f"{GACHON_BASE}/kor/1156/subview.do",
+        "categories": (),
+        "keywords": ("도서관", "열람실", "대출", "도서 예약"),
+    },
+    "student_id": {
+        "label": "가천대 학생증 발급 안내",
+        "desc": "학생증 발급·재발급",
+        "url": f"{GACHON_BASE}/kor/1163/subview.do",
+        "categories": (),
+        "keywords": ("학생증", "모바일학생증", "학생증 재발급"),
+    },
+    "cyber_campus": {
+        "label": "가천대 사이버캠퍼스(LMS)",
+        "desc": "온라인 강의·이러닝 학습 시스템",
+        "url": f"{GACHON_BASE}/kor/1151/subview.do",
+        "categories": (),
+        "keywords": ("사이버캠퍼스", "LMS", "온라인 강의", "이러닝", "출석체크"),
+    },
+    "career": {
+        "label": "가천대 취업지원",
+        "desc": "취업·진로·인턴십 지원 프로그램",
+        "url": f"{GACHON_BASE}/kor/891/subview.do",
+        "categories": (),
+        "keywords": ("취업", "진로", "인턴십", "채용", "경력개발"),
+    },
+    "counseling": {
+        "label": "가천대 학생상담센터",
+        "desc": "심리·학업 상담 지원",
+        "url": f"{GACHON_BASE}/kor/3107/subview.do",
+        "categories": (),
+        "keywords": ("상담센터", "심리상담", "학생상담"),
+    },
+    "intl": {
+        "label": "가천대 국제교류프로그램",
+        "desc": "교환학생·어학연수 등 국제교류",
+        "url": f"{GACHON_BASE}/kor/3099/subview.do",
+        "categories": (),
+        "keywords": ("교환학생", "어학연수", "국제교류", "해외파견", "유학"),
+    },
+    "notice": {
+        "label": "가천대 학사공지",
+        "desc": "학사 관련 공지사항 게시판",
+        "url": f"{GACHON_BASE}/kor/3104/subview.do",
+        "categories": (),
+        "keywords": ("학사공지", "공지사항"),
+    },
+    "rules": {
+        "label": "가천대 규정집(학칙)",
+        "desc": "학칙·학사 규정 원문",
+        "url": f"{GACHON_BASE}/kor/796/subview.do",
+        "categories": (),
+        "keywords": ("학칙", "규정집", "학사규정"),
+    },
+}
+
+
+def build_link_hint(topic_keys: list[str]) -> str:
+    """매칭된 topic들의 공식 링크를 안내하는 그라운딩 힌트 블록을 만든다.
+
+    매칭된 링크는 개수 제한 없이 모두 노출하고, 각 링크가 어떤 페이지인지
+    한 줄 설명(desc)을 함께 붙인다. '자료에 답이 있으면 그걸 먼저, 없으면
+    링크로'라는 조건부 지시를 담으므로 정상 rag 경로/가드레일 경로 양쪽에
+    붙여도 안전하다. 매칭이 없으면 빈 문자열을 반환한다.
+    """
+    if not topic_keys:
+        return ""
+    lines = "\n".join(
+        f"  - {OFFICIAL_LINKS[k]['label']} — {OFFICIAL_LINKS[k]['desc']}: {OFFICIAL_LINKS[k]['url']}"
+        for k in topic_keys
+    )
+    return f"""
+[공식 링크 안내 규칙]
+이 질문은 아래 가천대 공식 안내 페이지와 관련이 있다. 근거 자료에서 사용자가
+물은 구체적인 정보(날짜·기간·금액·절차·규정 등)를 확인할 수 없으면, 절대
+추측하거나 지어내지 말고 아래 관련 공식 페이지를 "모두" 안내해라. 이때 각
+링크마다 무슨 내용인지 짧은 설명(예: "학사일정 — 시험·성적 등 학기 전체 일정")을
+함께 적어 사용자가 무엇을 위한 링크인지 알 수 있게 해라.
+{lines}
+근거 자료에 명확한 답이 있으면 그 값을 먼저 안내하고, 위 링크는 "더 자세한
+내용은 여기서 확인할 수 있어요"처럼 덧붙이는 용도로만 써라. 질문과 무관한
+링크는 넣지 마라.
 """
+
 
 # ===== 가드레일 (자료에 없는 질문 → 문의처 안내) =====
 GUARDRAIL_GROUNDING = """
