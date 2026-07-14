@@ -6,7 +6,11 @@ RAG 문서에서 실제 학사 일정을 자동으로 찾아 연결하는 기능
 """
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+# 한국 표준시(KST, UTC+9). 한국은 DST가 없어 고정 오프셋으로 안전하다.
+# 배포 서버 tz가 UTC여도 사용자가 말하는 '오후 3시' 등 벽시계 시각을 KST로 해석한다.
+KST = timezone(timedelta(hours=9), "KST")
 
 _MONTH_DAY = re.compile(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일")
 _N_DAYS_LATER = re.compile(r"(\d+)\s*일\s*(?:후|뒤)")
@@ -14,8 +18,18 @@ _TIME = re.compile(r"(오전|오후)?\s*(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분)?")
 _RELATIVE_DAYS = {"오늘": 0, "내일": 1, "모레": 2, "글피": 3}
 
 
+def now_kst() -> datetime:
+    """현재 시각을 KST 기준 naive datetime으로 반환.
+
+    reminder_requests.remind_at 컬럼이 timestamp(without tz)이고 스케줄러도
+    naive 비교를 하므로, 시스템 tz(서버가 UTC일 수 있음)에 흔들리지 않도록
+    KST 벽시계 naive 값으로 통일한다. 예약 등록·발송 판정 모두 이 함수를 쓴다.
+    """
+    return datetime.now(KST).replace(tzinfo=None)
+
+
 def parse_remind_at(text: str, now: datetime | None = None) -> datetime:
-    base = now or datetime.now()
+    base = now or now_kst()
     target_date = None
 
     m = _MONTH_DAY.search(text)

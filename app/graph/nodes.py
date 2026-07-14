@@ -22,7 +22,7 @@ from app.core.prompts import (
 from app.graph.state import AgentState
 from app.repositories.contacts import format_contact, match_contact
 from app.repositories.rag import get_rag_repository
-from app.services.reminder_time import parse_remind_at
+from app.services.reminder_time import now_kst, parse_remind_at
 from app.tools.executor import ToolExecutor
 
 logger = logging.getLogger("app.rag")
@@ -622,7 +622,7 @@ async def reminder_node(state: AgentState) -> dict:
             return await _register_reminder(pending, session_id)
 
     # ── 새 리마인드 요청 시작 ───────────────────────────────
-    now = datetime.now()
+    now = now_kst()
     remind_at = parse_remind_at(user_input, now=now)
     # parse_remind_at은 날짜 표현이 없으면 now를 그대로 반환 → '즉시 발송'으로 본다.
     immediate = abs((remind_at - now).total_seconds()) < 60

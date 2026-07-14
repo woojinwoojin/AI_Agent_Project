@@ -14,10 +14,17 @@ jobs:
     steps:
       - name: Deploy to GCE VM
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          # 앱 시크릿 — 러너 환경변수로 받아 envs로 원격 세션에 전달한다.
+          # (.env는 .gitignore/.dockerignore라 git·이미지에 없으므로 배포 때 여기서 생성)
+          UPSTAGE_API_KEY: ${{ secrets.UPSTAGE_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
         with:
           host: ${{ secrets.GCE_HOST }}
           username: ${{ secrets.GCE_USER }}
           key: ${{ secrets.GCE_SSH_KEY }}
+          envs: UPSTAGE_API_KEY,RESEND_API_KEY,RESEND_FROM_EMAIL
           script: |
             set -e
 
@@ -27,7 +34,18 @@ jobs:
             git checkout ${{ github.ref_name }}
             git reset --hard origin/${{ github.ref_name }}
 
+            # docker-compose api 서비스가 env_file로 읽는 .env를 GitHub Secrets 기반으로 생성.
+            # DATABASE_URL은 docker-compose.yml의 environment에서 db 서비스로 덮으므로 여기 불필요.
+            umask 077
+            cat > .env <<EOF
+            ENVIRONMENT=production
+            DEBUG=false
+            UPSTAGE_API_KEY=${UPSTAGE_API_KEY}
+            LLM_MODEL=solar-pro3
+            RESEND_API_KEY=${RESEND_API_KEY}
+            RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL:-onboarding@resend.dev}
+            EOF
+
             sudo docker compose down
             sudo docker compose up -d --build
-
             sudo docker compose ps
