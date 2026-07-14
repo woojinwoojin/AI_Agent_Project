@@ -13,6 +13,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from app import config, db
 from app.graph import graph as graph_module
+from app.repositories.reminders import get_reminder_repository
 from app.routers import chat
 from app.scheduler import start_scheduler, stop_scheduler
 
@@ -77,6 +78,16 @@ async def home(request: Request):
         request=request,
         name="index.html",
         context={},
+    )
+
+
+@app.get("/reminders", response_class=HTMLResponse)
+async def reminder_logs(request: Request):
+    reminders = get_reminder_repository().list_recent(limit=100)
+    return templates.TemplateResponse(
+        request=request,
+        name="reminders.html",
+        context={"reminders": reminders},
     )
 
 
