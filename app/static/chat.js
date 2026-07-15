@@ -348,7 +348,7 @@ function appendSources(wrap, sources) {
         const sourceName = source.source || source.title || "출처 없음";
         const page = source.page || source.source_page || "";
         const score = source.score !== undefined
-            ? ` · 관련도 ${Number(source.score).toFixed(3)}`
+            ? ` · 관련도 ${(Number(source.score) * 100).toFixed(1)}%`
             : "";
 
         item.textContent = `${index + 1}. ${sourceName}${page ? ` / ${page}` : ""}${score}`;
