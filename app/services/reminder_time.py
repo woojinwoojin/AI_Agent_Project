@@ -90,3 +90,41 @@ def parse_remind_at(text: str, now: datetime | None = None) -> datetime:
         target_date += timedelta(days=1)
 
     return target_date
+
+
+def has_date_expr(text: str) -> bool:
+    """문장에 날짜 표현(N월 N일 / N일 후 / 오늘·내일·모레·글피)이 있는지."""
+    return bool(
+        _MONTH_DAY.search(text)
+        or _N_DAYS_LATER.search(text)
+        or any(w in text for w in _RELATIVE_DAYS)
+    )
+
+
+def has_time_expr(text: str) -> bool:
+    """문장에 시각 표현(N시 [N분])이 있는지."""
+    return bool(_TIME.search(text))
+
+
+def apply_time_update(existing: datetime | str, text: str, now: datetime | None = None):
+    """진행 중인 리마인드의 발송 시각을, 사용자가 새로 말한 표현으로 갱신해 반환.
+
+    멀티턴 도중 "9시 30분으로 해줘"처럼 일부만 바꾸는 경우를 위해:
+    - 시각만 주면 기존 '날짜'를 보존하고 시각만 교체한다(그냥 재파싱하면 날짜가
+      오늘로 리셋돼 유실되는 함정을 피한다).
+    - 날짜만 주면 기존 '시각'을 보존하고 날짜만 교체한다.
+    - 날짜·시각 둘 다 주면 새 값으로 통째 교체한다.
+    - 시각·날짜 표현이 전혀 없으면 None(갱신 신호 아님)을 반환한다.
+    """
+    if isinstance(existing, str):
+        existing = datetime.fromisoformat(existing)
+    hd, ht = has_date_expr(text), has_time_expr(text)
+    if not hd and not ht:
+        return None
+    parsed = parse_remind_at(text, now=now).replace(second=0, microsecond=0)
+    if hd and ht:
+        return parsed
+    if ht:  # 시각만 → 기존 날짜 유지
+        return existing.replace(hour=parsed.hour, minute=parsed.minute, second=0, microsecond=0)
+    # 날짜만 → 기존 시각 유지
+    return parsed.replace(hour=existing.hour, minute=existing.minute, second=0, microsecond=0)
