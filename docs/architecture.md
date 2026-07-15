@@ -28,9 +28,10 @@ flowchart TB
 
 ## 2. LangGraph 라우팅
 
-router가 의도를 분류해 5개 경로로 분기한다. **규칙(`resolve_tool`·카테고리 키워드)이
-확정하면 라우터 LLM을 생략**해 지연을 없앤다(측정 p50 0ms). `reminder`·`ask_year`는
-결정적 템플릿으로 답을 직접 만들어 응답 LLM을 거치지 않는다(드리프트 방지).
+router가 의도를 분류해 6개 경로로 분기한다. **규칙(`resolve_tool`·카테고리 키워드)이
+확정하면 라우터 LLM을 생략**해 지연을 없앤다(측정 p50 0ms). `reminder`·`ask_year`·
+`out_of_scope`는 결정적 템플릿으로 답을 직접 만들어 응답 LLM을 거치지 않는다(드리프트 방지).
+`out_of_scope`는 인공지능학과(구 AI·소프트웨어학부) 외 학과 질문을 결정적으로 거절한다.
 
 ```mermaid
 flowchart LR
@@ -39,12 +40,14 @@ flowchart LR
   R -->|tool| T["tool<br/>졸업계산 · 과목추천"]
   R -->|reminder| RM["reminder<br/>확인 후 예약"]
   R -->|ask_year| AY["ask_year<br/>학번 되묻기"]
+  R -->|out_of_scope| OOS["out_of_scope<br/>타 학과 전용 안내"]
   R -->|chat| RESP
   RAG --> RESP["response<br/>Solar LLM 답변"]
   T --> RESP
   RESP --> E(["END"])
   RM --> E
   AY --> E
+  OOS --> E
 ```
 
 ---
@@ -52,8 +55,10 @@ flowchart LR
 ## 3. RAG 파이프라인 (멘토링 반영)
 
 2계층 카테고리로 검색 범위를 좁히고, 학번을 보유 교육과정 년도로 매핑해 필터한다.
-pgvector 후보를 5요소 경량 reranker로 재정렬하고, 최고 점수가 신뢰 임계값(0.40) 미만이면
-답을 지어내지 않고 가드레일(문의처 안내)로 전환한다.
+(학번을 도중에 정정한 후속 턴도 그 학번으로 재스코프한다.) pgvector 후보를 5요소 경량
+reranker로 재정렬하고, 최고 점수가 신뢰 임계값(0.45) 미만이거나 자료 미보유 주제
+(범위밖 주제 레지스트리: 등록금·기숙사비·셔틀·재수강·전과·계절학기)면 답을 지어내지 않고
+가드레일(문의처 안내)로 전환한다.
 
 ```mermaid
 flowchart LR
@@ -62,7 +67,7 @@ flowchart LR
   YR --> VEC["pgvector 코사인 검색<br/>카테고리별 후보"]
   VEC --> DD["중복 제거"]
   DD --> RR["Reranker<br/>vec·65 kw·15 cat·10<br/>prio·05 rec·05"]
-  RR --> GATE{"top score<br/>&ge; 0.40 ?"}
+  RR --> GATE{"top score &ge; 0.45<br/>AND 범위밖 주제 아님?"}
   GATE -->|예| CTX["Top-k 근거 → LLM<br/>(그라운딩 답변)"]
   GATE -->|아니오| GD["가드레일<br/>문의처 · 공식링크"]
 ```
@@ -100,13 +105,15 @@ sequenceDiagram
 
 | 요소 | 내용 |
 |---|---|
-| **Guardrail** | reranker 점수(pgvector confidence 가중합) < 0.40이면 추측 대신 문의처 안내. 순수 연락처 질문은 항상 정형 데이터로 응답 |
-| **Grounding** | 검색 근거·도구 결과 안에서만 답하도록 프롬프트로 강제. 날짜·전화·과목명 임의 생성 금지 |
+| **Guardrail** | reranker 점수 < 0.45이면 추측 대신 문의처 안내. 순수 연락처 질문은 항상 정형 데이터로 응답 |
+| **학과 스코프** | 인공지능학과(구 AI·소프트웨어학부) 외 학과명이 있으면 검색·LLM 없이 "전용 챗봇"임을 결정적으로 안내(out_of_scope) |
+| **범위밖 주제 레지스트리** | 자료 미보유 행정 주제(등록금·기숙사비·셔틀·재수강·전과·계절학기)는 어휘 겹침으로 점수가 높아도 점수 무관하게 가드레일 |
+| **Grounding** | 검색 근거·도구 결과 안에서만 답하도록 프롬프트로 강제. 날짜·전화·과목명·학과별 기준점수 임의 생성 금지 |
 | **Privacy (ADR-007)** | 이메일·전화는 규칙으로만 추출, LLM·trace에 원본 미전달(Langfuse mask 훅으로 마스킹) |
 | **Human-in-the-loop** | 이메일 리마인드는 물어보고→확인받고→발송. 결정적 템플릿으로 일관 동작 |
 | **Year-aware** | 졸업요건·교육과정은 학번(입학년도) 기준으로 필터·계산. 자료 없으면 되묻거나 근접 년도로 안내 |
 | **Observability** | Langfuse로 라우팅 판단·검색 점수·가드레일 근거를 span 기록(옵션, 기본 비활성) |
-| **Eval** | 25 시나리오 × N회 반복으로 라우팅·검색·가드레일·답변 품질 KPI 측정(Tier1/Tier2, `eval/`) |
+| **Eval** | 50 시나리오 × N회 반복으로 라우팅·검색·가드레일·답변 품질 KPI 측정(Tier1/Tier2, `eval/`). 실측: 가드레일·검색 100%, intent 98.2%, 답변 근거일치 93.8% |
 | **Performance** | 규칙이 의도를 확정하면 라우터 LLM 생략 → 라우팅 지연 p50 0ms |
 
 ---
