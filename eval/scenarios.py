@@ -775,6 +775,34 @@ SCENARIOS = [
             }
         ],
     },
+    # ── 페르소나 I: 멀티턴 도구 연속(README §7 시나리오1 = 시연 흐름) ──────
+    # 두 도구를 개별로 부르는 시나리오(S05·S06)는 있었지만, 한 세션에서 졸업계산
+    # → 과목추천으로 이어지는 흐름은 평가에 없었다. 시연 그대로를 태워, 1턴의
+    # tool_name/tool_result가 남아 2턴 라우팅을 오염시키지 않는지 검증한다
+    # (router가 매 턴 리셋한다는 전제를 회귀로 고정).
+    {
+        "id": "S51",
+        "persona": "2학년 재학생(시연 흐름)",
+        "turns": [
+            {
+                "q": "저 지금 전공 30학점 들었는데 졸업까지 얼마 남았어요?",
+                "intent": "tool",
+                "tool_name": "calc_graduation_progress",
+                "answerable": True,
+                "expect_facts": ["42"],
+                "expect_source": True,
+                "note": "1턴 졸업계산: 72-30=42",
+            },
+            {
+                "q": "2학년 2학기에는 뭐 들어야 해요?",
+                "intent": "tool",
+                "tool_name": "recommend_courses",
+                "answerable": True,
+                "expect_source": True,
+                "note": "2턴 과목추천. 1턴 도구 상태가 남아도 재라우팅돼야 한다",
+            },
+        ],
+    },
 ]
 
 
