@@ -10,7 +10,7 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
     # Router가 결정한 의도. ask_year = 학번(입학년도)을 한 번 되묻는 흐름.
-    # out_of_scope = 인공지능학과(구 소프트웨어학과) 외 학과 질문 → 전용 챗봇 안내.
+    # out_of_scope = 인공지능학과(구 AI·소프트웨어학부) 외 학과 질문 → 전용 챗봇 안내.
     intent: Literal["chat", "rag", "tool", "reminder", "ask_year", "out_of_scope"] | None
 
     # 이번 턴에 실제로 처리할 질문 텍스트. 보통 messages[-1]이지만, 학번 되묻기 뒤
