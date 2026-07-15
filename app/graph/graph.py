@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph
 from app.graph.edges import route_by_intent
 from app.graph.nodes import (
     ask_admission_year_node,
+    out_of_scope_node,
     rag_node,
     reminder_node,
     response_node,
@@ -32,6 +33,7 @@ def create_graph():
     builder.add_node("tool", tool_node)
     builder.add_node("reminder", reminder_node)
     builder.add_node("ask_year", ask_admission_year_node)
+    builder.add_node("out_of_scope", out_of_scope_node)
     builder.add_node("response", response_node)
 
     builder.add_edge(START, "router")
@@ -43,6 +45,7 @@ def create_graph():
             "tool": "tool",
             "reminder": "reminder",
             "ask_year": "ask_year",
+            "out_of_scope": "out_of_scope",
             "response": "response",
         },
     )
@@ -52,6 +55,8 @@ def create_graph():
     builder.add_edge("reminder", END)
     # ask_year(학번 되묻기)도 결정적 템플릿으로 질문만 던지고 END로 간다.
     builder.add_edge("ask_year", END)
+    # out_of_scope(타 학과 안내)도 결정적 템플릿으로 안내만 하고 END로 간다.
+    builder.add_edge("out_of_scope", END)
     builder.add_edge("response", END)
     return builder.compile(checkpointer=_checkpointer)
 

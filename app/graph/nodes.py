@@ -100,6 +100,38 @@ def _looks_like_smalltalk(text: str) -> bool:
     return any(p in stripped or p in low for p in _SMALLTALK_PATTERNS)
 
 
+# ── 학과 스코프 가드레일 ──────────────────────────────────────────────────
+# 이 챗봇은 인공지능학과(구 소프트웨어학과) 전용이다. 다른 학과(예: 컴퓨터공학과,
+# 전자공학과, 간호학과…)를 물으면 인공지능학과 자료로 답하면 안 되고 "전용 챗봇"임을
+# 안내해야 한다. RESPONSE_PROMPT에 "다른 학과명이 없으면 인공지능학과로 답하라"는
+# 지시는 있으나 '다른 학과명이 있을 때' 거절 규칙이 없었고, 프롬프트 지시는
+# Solar-pro가 무시하는 사례가 관측돼(과목 추천 환각 참고) 결정적 규칙으로 막는다.
+_INSCOPE_DEPTS = ("인공지능", "소프트웨어", "ai")
+# 학과명이 아니라 일반 지시어("우리학과", "타학과" 등)는 스코프 밖으로 보지 않는다.
+_GENERIC_DEPT_PREFIX = {"우리", "저희", "본인", "타", "다른", "무슨", "어느", "해당", "각", "본"}
+# "OO공학과/OO학과/OO학부" 형태의 학과명 언급을 잡는다. 접두(OO)는 붙어있는
+# 한글/영문 2자 이상만(학과명 없이 " 학과 사무실"처럼 띄어 쓴 일반어는 매칭 안 됨).
+_DEPT_MENTION_RE = re.compile(r"([가-힣A-Za-z]{2,}?)(?:공학과|학과|학부)")
+
+
+def detect_out_of_scope_department(text: str) -> str | None:
+    """질문에 인공지능/소프트웨어 외의 학과명이 있으면 그 학과명을, 없으면 None.
+
+    "컴퓨터공학과 졸업요건" -> "컴퓨터공학과" (스코프 밖).
+    "인공지능학과 교육목표", "소프트웨어학과랑 차이", "우리 학과 사무실" -> None.
+    """
+    for m in _DEPT_MENTION_RE.finditer(text):
+        prefix = m.group(1)
+        low = prefix.lower()
+        if prefix in _GENERIC_DEPT_PREFIX:
+            continue
+        # 인공지능/소프트웨어(및 그 조합, 예: "소프트웨어융합")로 시작하면 스코프 안.
+        if any(low.startswith(d) or low.endswith(d) for d in _INSCOPE_DEPTS):
+            continue
+        return m.group(0)
+    return None
+
+
 def _looks_like_reminder(text: str) -> bool:
     """이메일 리마인드 요청 신호가 있는지(주소 유무와 무관). 주소가 없어도
     reminder 흐름으로 보내 되묻기(awaiting_email)부터 시작하게 한다."""
@@ -411,6 +443,40 @@ async def router_node(state: AgentState) -> dict:
         # 새 학사 질문으로 판단 → 리마인드 대기 상태를 버리고 아래 일반 라우팅을 계속 진행
         pending = None
 
+    # ── 학과 스코프 가드레일 ──
+    # 인공지능학과(구 소프트웨어학과) 외 학과명이 질문에 있으면, 검색/도구/LLM을
+    # 태우지 않고 "전용 챗봇"임을 결정적으로 안내한다(→ END). 인공지능학과 자료로
+    # 다른 학과 질문에 답하는 환각을 근본적으로 차단한다.
+    other_dept = detect_out_of_scope_department(query)
+    if other_dept is not None:
+        logger.info(
+            json.dumps(
+                {
+                    "stage": "router",
+                    "session_id": state.get("session_id"),
+                    "question": query,
+                    "intent": "out_of_scope",
+                    "detected_department": other_dept,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return {
+            "intent": "out_of_scope",
+            "query": query,
+            "admission_year": admission_year,
+            "year_prompted": year_prompted,
+            "applied_curriculum_year": None,
+            "category_l1": None,
+            "tool_name": None,
+            "tool_args": None,
+            "retrieved_docs": [],
+            "guardrail": False,
+            "contact": None,
+            "tool_result": None,
+            "pending_action": None,
+        }
+
     # ── 규칙 우선 판정: 도구/리마인드로 확정되면 LLM 호출을 생략한다 ──────────
     # 이 두 경우엔 LLM이 뭐라 하든 아래 규칙(resolve_tool / _looks_like_reminder)이
     # intent를 덮어쓰고, 카테고리도 안 쓰므로 LLM 출력이 전부 버려졌다(순수 낭비).
@@ -667,6 +733,23 @@ _ASK_ADMISSION_YEAR_MSG = (
 async def ask_admission_year_node(state: AgentState) -> dict:
     """학번을 한 번 되묻는다(결정적 템플릿)."""
     return {"messages": [AIMessage(content=_ASK_ADMISSION_YEAR_MSG)]}
+
+
+# ── 학과 스코프 밖 안내 흐름 ────────────────────────────────────────────
+# 인공지능학과(구 소프트웨어학과) 외 학과 질문 → 결정적 템플릿으로 "전용 챗봇"임을
+# 안내하고 END. RAG/도구/응답 LLM을 거치지 않아 다른 학과 자료로 답하는 환각이 없다.
+_OUT_OF_SCOPE_MSG = (
+    "앗, 저는 가천대학교 **인공지능학과(구 소프트웨어학과)** 학생을 돕는 학사 안내 "
+    "AI라서, 다른 학과의 학사 정보는 안내해 드리기 어려워요. 😥\n\n"
+    "인공지능학과(구 소프트웨어학과) 관련해서 궁금한 점이 있으면 무엇이든 물어봐 "
+    "주세요! 다른 학과의 졸업요건·교육과정은 해당 학과사무실이나 가천대 학사안내"
+    "(https://www.gachon.ac.kr) 에서 확인하시는 게 정확해요."
+)
+
+
+async def out_of_scope_node(state: AgentState) -> dict:
+    """스코프 밖 학과 질문에 '인공지능학과 전용'임을 안내한다(결정적 템플릿)."""
+    return {"messages": [AIMessage(content=_OUT_OF_SCOPE_MSG)]}
 
 
 # ── 이메일 리마인드 멀티턴 확인 흐름 ─────────────────────────────────────
