@@ -429,7 +429,10 @@ async def router_node(state: AgentState) -> dict:
     # 그런 경우엔 pending을 버리고 아래 일반 라우팅으로 흘려보낸다.
     if pending and pending.get("type") == "reminder":
         stage = pending.get("stage")
-        is_continuation = (
+        # 진행 중이라도 '다른 학과' 언급이 있으면 이어받지 않고 아래 학과 스코프
+        # 가드레일로 흘려보낸다(그렇지 않으면 "컴퓨터공학과는 어때?" 같은 입력이
+        # 새 질문으로 안 잡혀 이메일만 계속 되묻는 데 갇힌다).
+        is_continuation = detect_out_of_scope_department(user_input) is None and (
             (
                 stage == "awaiting_email"
                 and (_extract_email(user_input) or any(w in user_input for w in _CONFIRM_NO))
@@ -525,10 +528,12 @@ async def router_node(state: AgentState) -> dict:
     elif rule_categories := classify_categories(query):
         # 카테고리 키워드 매칭 → 학사 질문(rag) 확정. LLM 불필요.
         intent = "rag"
-    elif _looks_like_smalltalk(query):
+    elif _looks_like_smalltalk(query) and not _is_out_of_scope(query):
         # 명백한 잡담(인사/감사/작별/사용법 등) → chat 확정. LLM 판단에 맡기면
         # "너 어떻게 쓰는 거야?"처럼 rag로 오분류돼 근거 없는 검색·가드레일 오발동으로
         # 새므로, 화이트리스트가 걸리면 LLM 호출 없이 chat으로 단락한다(지연도 절약).
+        # 단, 범위밖 주제("셔틀 어떻게 써?")는 스몰토크로 새면 주제 가드레일(rag_node)을
+        # 우회하므로 여기서 제외해 rag 경로로 보내 문의처 안내를 받게 한다.
         intent = "chat"
     else:
         # 카테고리 미매칭(키워드 밖 질문) → LLM으로 chat/rag 구분 + 카테고리 fallback
