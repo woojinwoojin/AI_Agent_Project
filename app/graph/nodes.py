@@ -32,7 +32,7 @@ from app.graph.state import AgentState
 from app.observability import record_rag_observation
 from app.repositories.contacts import contact_phone, format_contact, match_contact
 from app.repositories.rag import get_rag_repository
-from app.services.reminder_time import now_kst, parse_remind_at
+from app.services.reminder_time import apply_time_update, now_kst, parse_remind_at
 from app.tools.executor import ToolExecutor
 
 logger = logging.getLogger("app.rag")
@@ -891,6 +891,19 @@ def _reminder_reply(text: str, pending: dict | None) -> dict:
     return {"messages": [AIMessage(content=text)], "pending_action": pending}
 
 
+def _apply_remind_update(pending: dict, user_input: str) -> dict | None:
+    """진행 중 pending에 사용자가 말한 시간/날짜 수정을 반영한 새 pending을 반환.
+    수정 표현이 없거나 값이 그대로면 None(변화 없음)."""
+    updated = apply_time_update(pending["remind_at"], user_input, now=now_kst())
+    if updated is None or updated.isoformat() == pending.get("remind_at"):
+        return None
+    return {
+        **pending,
+        "remind_at": updated.isoformat(),
+        "remind_label": updated.strftime("%Y-%m-%d %H:%M"),
+    }
+
+
 async def _register_reminder(pending: dict, session_id: str | None) -> dict:
     """확인 완료 → reminder_requests에 예약 등록(실제 발송은 스케줄러가 처리)."""
     remind_at = datetime.fromisoformat(pending["remind_at"])
@@ -926,13 +939,27 @@ async def reminder_node(state: AgentState) -> dict:
         if stage == "awaiting_email":
             if any(w in user_input for w in _CONFIRM_NO):
                 return _reminder_reply(_REMINDER_CANCELED, None)
+            # 이메일을 받기 전에 사용자가 발송 시각만 바꾸는 경우("9시 30분으로 해줘")
+            # 그 수정을 반영한다(기존 날짜는 보존 — 날짜를 다시 되묻지 않는다).
+            updated = _apply_remind_update(pending, user_input)
+            if updated is not None:
+                pending = updated
             email = _extract_email(user_input)
             if not email:
-                return _reminder_reply(_REMINDER_REASK_EMAIL, pending)
+                # 시각을 방금 바꿨으면 그 새 시각을 반영해 이메일을 다시 청한다.
+                # (아무 정보도 없으면 '주소를 못 찾았어요'로 안내)
+                msg = _ask_email_msg(pending) if updated is not None else _REMINDER_REASK_EMAIL
+                return _reminder_reply(msg, pending)
             pending = {**pending, "email": email, "stage": "awaiting_confirm"}
             return _reminder_reply(_ask_confirm_msg(pending), pending)
 
         if stage == "awaiting_confirm":
+            # 확인 단계에서 시각/날짜를 바꾸면("9시 30분으로 해줘") 옛 시각으로
+            # 등록되지 않도록 수정을 먼저 반영하고 새 내용으로 다시 확인받는다.
+            # ("해줘"가 confirm-yes로 오인돼 옛 시각으로 발송되는 사고 방지)
+            updated = _apply_remind_update(pending, user_input)
+            if updated is not None:
+                return _reminder_reply(_ask_confirm_msg(updated), updated)
             decision = _classify_confirm(user_input)
             if decision == "no":
                 return _reminder_reply(_REMINDER_CANCELED, None)
