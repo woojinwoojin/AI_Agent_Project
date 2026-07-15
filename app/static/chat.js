@@ -435,6 +435,18 @@ messageInput.addEventListener("keydown", (event) => {
 quickQuestions.forEach((button) => {
     button.addEventListener("click", async () => {
         const question = button.dataset.question || button.textContent;
+
+        // data-prefill 버튼(예: 리마인드 예약)은 개인정보(이메일)를 사용자가 직접
+        // 채워야 하므로 바로 전송하지 않고 입력창에 예시를 넣어 편집하게 한다.
+        if (button.dataset.prefill === "true") {
+            messageInput.value = question;
+            autoGrowInput();
+            messageInput.focus();
+            const end = messageInput.value.length;
+            messageInput.setSelectionRange(end, end);
+            return;
+        }
+
         await sendMessage(question);
     });
 });
