@@ -86,6 +86,36 @@ function createBotAvatar() {
     return avatar;
 }
 
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+// 봇 답변을 안전하게 HTML로 변환한다. XSS를 막기 위해 먼저 전부 escape 하고,
+// URL 부분만 <a>로 되살린다(scheme을 http/https로 한정 → javascript: 차단).
+// **굵게** 는 링크를 만든 뒤에 치환한다(URL 안의 * 오검출 방지).
+function renderRichText(text) {
+    const urlRe = /(https?:\/\/[^\s<]+[^\s<.,)])/g;
+    let html = "";
+    let last = 0;
+    let match;
+
+    while ((match = urlRe.exec(text)) !== null) {
+        html += escapeHtml(text.slice(last, match.index));
+        const url = match[0];
+        html +=
+            `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">` +
+            `${escapeHtml(url)}</a>`;
+        last = urlRe.lastIndex;
+    }
+    html += escapeHtml(text.slice(last));
+
+    return html.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+}
+
 function addUserMessage(text) {
     const messageDiv = createMessageElement("user");
 
@@ -116,7 +146,7 @@ function addBotMessage(text, options = {}) {
 
     const bubble = document.createElement("div");
     bubble.classList.add("bubble");
-    bubble.textContent = text;
+    bubble.innerHTML = renderRichText(text);
 
     wrap.appendChild(bubble);
 
@@ -199,6 +229,7 @@ async function sendMessage(message) {
 
     let meta = null;
     let buffer = "";
+    let answerText = "";
     let hasStartedAnswer = false;
     let hasFinished = false;
 
@@ -254,7 +285,10 @@ async function sendMessage(message) {
                         hasStartedAnswer = true;
                     }
 
-                    bubble.textContent += parsed.data.text || "";
+                    // 스트리밍 중에는 평문으로 누적(부분 URL/**가 깨져 보이지 않게).
+                    // 최종 렌더링(링크·굵게)은 done에서 한 번에 처리한다.
+                    answerText += parsed.data.text || "";
+                    bubble.textContent = answerText;
                     scrollToBottom();
                 }
 
@@ -264,6 +298,10 @@ async function sendMessage(message) {
                 }
 
                 if (parsed.event === "done") {
+                    if (answerText) {
+                        bubble.innerHTML = renderRichText(answerText);
+                    }
+
                     if (meta && meta.sources && meta.sources.length > 0) {
                         appendSources(wrap, meta.sources);
                     }
