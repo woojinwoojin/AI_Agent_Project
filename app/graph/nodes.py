@@ -668,7 +668,14 @@ async def rag_node(state: AgentState) -> dict:
     # 현행(2026) 문서가 필터로 제외돼 오히려 답이 나빠진다.
     admission_year = state.get("admission_year")
     applied_year = None
-    if admission_year is not None and is_year_sensitive_question(user_input):
+    # 년도-민감 질문이거나, 사용자가 이번 메시지에서 학번을 직접 밝힌 경우
+    # (예: "아 나 21학번이야 다시 알려줘")에 검색을 그 학번으로 스코프한다.
+    # 후자를 놓치면 학번만 갱신되고 검색은 직전/현행 년도에 머물러, 21·22학번에게
+    # 23~26년 값(전필35/전선37)을 답하는 멀티턴 오답이 난다.
+    year_scoped = (
+        is_year_sensitive_question(user_input) or extract_admission_year(user_input) is not None
+    )
+    if admission_year is not None and year_scoped:
         try:
             years = await get_rag_repository().available_academic_years()
         except Exception:
