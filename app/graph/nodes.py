@@ -84,6 +84,7 @@ _SMALLTALK_PATTERNS = (
     "뭐 도와",
     "무엇을 도와",
     "어떻게 써",
+    "어떻게 쓰",
     "사용법",
     "어떻게 사용",
     "넌 누구",
@@ -130,6 +131,25 @@ def detect_out_of_scope_department(text: str) -> str | None:
             continue
         return m.group(0)
     return None
+
+
+# ── 범위밖 주제 가드레일 (학과 스코프와 별개) ────────────────────────────────
+# 위 학과 스코프가 '다른 학과' 질문을 막는다면, 이건 우리 학과 범위이지만 이 챗봇이
+# 자료를 보유하지 않는 학교 행정 소관 주제(등록금·기숙사비·셔틀·재수강·전과·계절학기)를
+# 막는다. 이 주제들은 어휘가 겹쳐 리랭커 점수가 임계값을 넘어도(재수강↔수강포기,
+# 전과↔졸업이수학점처럼 임베딩상 '진짜 이웃') 검색 문서가 실제 답을 담지 않는다.
+# 스칼라 임계값으로는 정상질문(최저 0.469, "수강신청은 어떻게 해?" 0.497)과 점수대가
+# 겹쳐 분리 불가함이 진단(eval/diag_guardrail.py)에서 확인됨 → 점수와 무관하게
+# 가드레일로 보내 올바른 문의처(학사지원팀/생활관 등, contacts.json)로 안내한다.
+# 검증: 전체 50 시나리오 중 answerable=True 질문에 하나도 안 걸림(오발동 0).
+# 주의: '전과'는 신청기간 데이터만 있고 학점요건 데이터는 없어, 현재 스코프상 전과 전반을
+#   문의처로 안내한다("전과 신청 언제야?"류도 학사지원팀으로 — 여전히 옳은 부서).
+_OUT_OF_SCOPE_TOPICS = ("재수강", "계절학기", "셔틀", "전과", "등록금", "기숙사")
+
+
+def _is_out_of_scope(text: str) -> bool:
+    """자료 미보유(학교 행정 소관) 주제인지 — 어휘 겹침으로 점수가 높아도 가드레일 강제."""
+    return any(topic in text for topic in _OUT_OF_SCOPE_TOPICS)
 
 
 def _looks_like_reminder(text: str) -> bool:
@@ -505,8 +525,13 @@ async def router_node(state: AgentState) -> dict:
     elif rule_categories := classify_categories(query):
         # 카테고리 키워드 매칭 → 학사 질문(rag) 확정. LLM 불필요.
         intent = "rag"
+    elif _looks_like_smalltalk(query):
+        # 명백한 잡담(인사/감사/작별/사용법 등) → chat 확정. LLM 판단에 맡기면
+        # "너 어떻게 쓰는 거야?"처럼 rag로 오분류돼 근거 없는 검색·가드레일 오발동으로
+        # 새므로, 화이트리스트가 걸리면 LLM 호출 없이 chat으로 단락한다(지연도 절약).
+        intent = "chat"
     else:
-        # 카테고리 미매칭(키워드 밖 질문 or 잡담) → LLM으로 chat/rag 구분 + 카테고리 fallback
+        # 카테고리 미매칭(키워드 밖 질문) → LLM으로 chat/rag 구분 + 카테고리 fallback
         llm_called = True
         structured_llm = get_llm().with_structured_output(IntentRoute)
         try:
@@ -522,9 +547,9 @@ async def router_node(state: AgentState) -> dict:
         # LLM은 tool이라 했지만 규칙이 인자를 못 찾음 → RAG로 폴백
         if intent == "tool":
             intent = "rag"
-        # 안전망: chat으로 분류됐어도 진짜 잡담(인사/감사/사용법 등)이 아니면 rag로 강제.
-        # (근거 문서 없이 LLM이 학과 정보를 자유생성하다 지어내는 환각 방지)
-        if intent == "chat" and not _looks_like_smalltalk(query):
+        # 안전망: 위 잡담 화이트리스트를 안 통과했으므로(=명백한 잡담 아님) LLM이 chat이라
+        # 해도 rag로 강제. (근거 문서 없이 LLM이 학과 정보를 지어내는 환각 방지)
+        if intent == "chat":
             intent = "rag"
 
     # 카테고리 최종 계산 (intent == rag일 때만). rule_categories는 위 분기에서 이미
@@ -671,7 +696,12 @@ async def rag_node(state: AgentState) -> dict:
     # 순수 연락처 질문(contact 카테고리만 매칭)일 때만 강제한다. "졸업요건 문의"처럼
     # 다른 주제 + '문의'가 섞인 질문은 정상 RAG로 내용을 답하게 둔다.
     is_contact_question = classify_categories(user_input) == ["contact"]
-    guardrail = is_contact_question or not docs or top_score < config.GUARDRAIL_MIN_SCORE
+    # 범위밖 주제(자료 미보유)는 점수와 무관하게 가드레일. 스칼라 임계값으로는 정상질문과
+    # 점수대가 겹쳐 못 거르는 under-fire(재수강·계절학기·전과·셔틀 등)를 여기서 차단한다.
+    out_of_scope = _is_out_of_scope(user_input)
+    guardrail = (
+        is_contact_question or out_of_scope or not docs or top_score < config.GUARDRAIL_MIN_SCORE
+    )
     contact = match_contact(user_input) if guardrail else None
 
     logger.info(
@@ -683,6 +713,7 @@ async def rag_node(state: AgentState) -> dict:
                 "top_score": top_score,
                 "guardrail": guardrail,
                 "is_contact_question": is_contact_question,
+                "out_of_scope": out_of_scope,
                 "contact_matched": contact is not None,
                 "admission_year": admission_year,
                 "applied_curriculum_year": applied_year,
