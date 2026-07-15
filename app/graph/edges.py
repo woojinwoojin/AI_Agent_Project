@@ -7,7 +7,7 @@ from app.graph.state import AgentState
 
 def route_by_intent(
     state: AgentState,
-) -> Literal["rag", "tool", "reminder", "ask_year", "response"]:
+) -> Literal["rag", "tool", "reminder", "ask_year", "out_of_scope", "response"]:
     intent = state.get("intent") or "chat"
     if intent == "rag":
         return "rag"
@@ -17,4 +17,6 @@ def route_by_intent(
         return "reminder"
     if intent == "ask_year":
         return "ask_year"
+    if intent == "out_of_scope":
+        return "out_of_scope"
     return "response"
